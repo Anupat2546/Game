@@ -1,0 +1,2779 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NEON ANGLER 2099 - เกมตกปลานีออนจับท่าทางมือ 60FPS</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts (Kanit + Orbitron) -->
+  <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@400;600;800;900&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+  <!-- p5.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+  <!-- ml5.js -->
+  <script src="https://unpkg.com/ml5@1.2.1/dist/ml5.min.js"></script>
+
+  <style>
+    :root {
+      --neon-cyan: #00f3ff;
+      --neon-pink: #ff00ea;
+      --neon-lime: #39ff14;
+      --neon-gold: #ffe600;
+      --bg-dark: #050814;
+    }
+
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: var(--bg-dark);
+      color: #ffffff;
+      font-family: 'Kanit', sans-serif;
+      overflow-x: hidden;
+    }
+
+    .font-cyber {
+      font-family: 'Orbitron', 'Kanit', sans-serif;
+    }
+
+    /* Hardware-accelerated 60FPS background webcam */
+    #bg-webcam-video {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      transform: scaleX(-1) translateZ(0);
+      will-change: transform;
+      opacity: 0.32;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    /* p5 Canvas Container */
+    #canvas-container {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    /* High contrast panels without heavy blur for 60FPS lock */
+    .cyber-card {
+      background: rgba(8, 14, 34, 0.92);
+      border: 2px solid rgba(0, 243, 255, 0.45);
+      box-shadow: 0 0 20px rgba(0, 243, 255, 0.15);
+    }
+
+    .hud-box {
+      background: rgba(6, 10, 26, 0.88);
+      border: 2px solid rgba(0, 243, 255, 0.55);
+      transform: translateZ(0);
+    }
+
+    .neon-btn {
+      transition: transform 0.12s ease, filter 0.12s ease;
+    }
+    .neon-btn:hover:not(:disabled) {
+      transform: translateY(-2px) scale(1.02);
+      filter: brightness(1.15);
+    }
+    .neon-btn:active:not(:disabled) {
+      transform: scale(0.97);
+    }
+  </style>
+</head>
+<body class="min-h-screen text-white selection:bg-cyan-400 selection:text-slate-950">
+
+  <!-- Hardware-Accelerated 60FPS Mirrored Webcam Background -->
+  <video id="bg-webcam-video" autoplay playsinline muted></video>
+
+  <!-- Hidden 160x120 Offscreen Canvas for 0-lag AI Hand Tracking -->
+  <canvas id="ai-offscreen-canvas" width="160" height="120" class="hidden"></canvas>
+
+  <!-- p5.js 60FPS Gameplay Canvas Container -->
+  <div id="canvas-container"></div>
+
+  <!-- Top Utility Bar (FPS Counter, Mouse Fallback Toggle, BGM Toggle & Volume Slider) -->
+  <header class="fixed top-2 right-3 z-50 flex flex-wrap items-center justify-end gap-2">
+    <span id="fps-counter" class="px-3 py-1 rounded-full bg-slate-950/90 border border-lime-400 text-lime-400 font-cyber text-xs md:text-sm font-bold">
+      60 FPS
+    </span>
+    <label class="px-3 py-1 rounded-full bg-slate-950/90 border border-cyan-400 text-cyan-200 text-xs md:text-sm font-bold flex items-center gap-1.5 cursor-pointer">
+      <input id="toggle-mouse-mode" type="checkbox" onchange="toggleControlMode(this.checked)" class="accent-cyan-400 w-4 h-4" />
+      <span>โหมดเมาส์สำรอง</span>
+    </label>
+    <div class="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-950/90 border border-pink-400">
+      <button
+        id="btn-bgm"
+        onclick="toggleBGM()"
+        class="neon-btn text-pink-300 text-xs md:text-sm font-bold"
+      >
+        🔊 เพลง: ปิด
+      </button>
+      <div class="h-3.5 w-[1px] bg-pink-500/40"></div>
+      <div class="flex items-center gap-1.5" title="ปรับความดังเสียงเพลงและเอฟเฟกต์">
+        <span id="vol-icon" class="text-xs">🔉</span>
+        <input
+          id="bgm-volume-slider"
+          type="range"
+          min="0"
+          max="100"
+          value="70"
+          oninput="changeMasterVolume(this.value)"
+          class="w-16 md:w-24 accent-pink-400 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
+        />
+        <span id="bgm-volume-label" class="font-cyber text-[11px] md:text-xs text-pink-200 font-bold w-8 text-right">70%</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ========================================================= -->
+  <!-- SCREEN 1: START SCREEN (หน้าเริ่มต้น + ล็อกอิน + สถิติเครื่อง)  -->
+  <!-- ========================================================= -->
+  <main id="screen-start" class="relative z-20 min-h-screen px-4 py-12 flex items-center justify-center">
+    <div class="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- Left Column: Title, Camera Status, Login/Register & Stage Select -->
+      <div class="lg:col-span-7 cyber-card rounded-3xl p-6 md:p-8 flex flex-col justify-between">
+        <div>
+          <div class="inline-block px-3.5 py-1 rounded-full bg-cyan-400/15 border border-cyan-400 text-cyan-300 text-sm font-bold mb-2">
+            ⚡ CYBERPUNK HAND-CATCH FISHING RPG · 60FPS
+          </div>
+          <h1 class="font-cyber text-4xl md:text-5xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-lime-300 to-pink-400">
+            NEON ANGLER 2099
+          </h1>
+          <p class="text-slate-300 text-lg md:text-xl mt-1">
+            ยกมือหน้ากล้องเว็บแคม! <b>"แบมือ"</b> เพื่อเล็ง และ <b>"กำมือ"</b> เพื่อดึงปลา!
+          </p>
+
+          <!-- Camera & AI Status Banner -->
+          <div class="mt-4 p-3.5 rounded-2xl bg-slate-900/90 border border-cyan-500/40 flex items-center gap-3.5">
+            <div class="w-5 h-5 rounded-full bg-amber-400 shrink-0" id="cam-status-dot"></div>
+            <div>
+              <div id="cam-status-title" class="text-lg md:text-xl font-bold text-white">
+                กำลังเปิดกล้องเว็บแคม 60FPS และเตรียม AI...
+              </div>
+              <div id="cam-status-desc" class="text-sm md:text-base text-slate-300">
+                ประมวลผลในเครื่อง 100% ไม่มีการบันทึกหรือส่งภาพออกนอกเครื่อง
+              </div>
+            </div>
+          </div>
+
+          <!-- Account Login / Register & Current Stats -->
+          <div class="mt-5 grid grid-cols-1 md:grid-cols-12 gap-4">
+            <!-- Account Box -->
+            <div class="md:col-span-7 p-4 rounded-2xl bg-slate-950/95 border-2 border-cyan-400/60">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-cyan-300 text-lg font-bold">🔐 บัญชีนักตกปลา (Username & Password)</span>
+                <span id="auth-status-badge" class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-lime-400/20 text-lime-300 border border-lime-400">
+                  ล็อกอินแล้ว
+                </span>
+              </div>
+
+              <!-- Logged-out Form -->
+              <div id="auth-form-box" class="space-y-2.5">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input
+                    id="input-username"
+                    type="text"
+                    maxlength="16"
+                    placeholder="ชื่อผู้ใช้ (Username)"
+                    class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-cyan-400 text-white text-base md:text-lg font-bold focus:outline-none focus:ring-2 focus:ring-lime-400"
+                  />
+                  <input
+                    id="input-password"
+                    type="password"
+                    maxlength="24"
+                    placeholder="รหัสผ่าน (Password)"
+                    class="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-cyan-400 text-white text-base md:text-lg font-bold focus:outline-none focus:ring-2 focus:ring-lime-400"
+                  />
+                </div>
+                <div class="flex gap-2">
+                  <button
+                    onclick="handleLoginOrRegister('login')"
+                    class="neon-btn flex-1 py-2 px-3 rounded-xl bg-cyan-400 text-slate-950 font-black text-base md:text-lg"
+                  >
+                    เข้าสู่ระบบ
+                  </button>
+                  <button
+                    onclick="handleLoginOrRegister('register')"
+                    class="neon-btn flex-1 py-2 px-3 rounded-xl bg-lime-400 text-slate-950 font-black text-base md:text-lg"
+                  >
+                    สมัครใหม่
+                  </button>
+                </div>
+              </div>
+
+              <!-- Logged-in Summary -->
+              <div id="auth-logged-in-box" class="hidden flex items-center justify-between pt-1">
+                <div>
+                  <div class="text-xs text-slate-400">ชื่อผู้ใช้งานปัจจุบัน (Username)</div>
+                  <div id="display-username" class="text-2xl font-black text-white">Angler-01</div>
+                </div>
+                <button
+                  onclick="logoutAccount()"
+                  class="neon-btn px-3.5 py-2 rounded-xl bg-rose-500/20 border border-rose-400 text-rose-300 font-bold text-sm md:text-base"
+                >
+                  สลับบัญชี / ออก
+                </button>
+              </div>
+
+              <div id="auth-feedback-msg" class="text-xs md:text-sm font-bold text-amber-300 mt-1.5 min-h-[18px]"></div>
+            </div>
+
+            <!-- Stats Box -->
+            <div class="md:col-span-5 p-4 rounded-2xl bg-slate-950/90 border border-cyan-500/40 flex flex-col justify-center">
+              <div class="text-slate-400 text-sm md:text-base">เงินสะสม / เบ็ดของบัญชีนี้</div>
+              <div class="text-2xl md:text-3xl font-black text-amber-300 mt-0.5">
+                💰 <span id="start-coins">0</span> G
+              </div>
+              <div id="start-rod-label" class="text-base md:text-lg text-cyan-300 font-bold truncate">
+                เบ็ดไม้ไผ่ไซเบอร์ (1.0x)
+              </div>
+            </div>
+          </div>
+
+          <!-- Stage Selector (Infinite Endless Stages) -->
+          <div class="mt-6">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <span class="text-cyan-300 text-lg md:text-xl font-bold">
+                🌊 เลือกด่านตกปลาไร้ขีดจำกัด (ปลดล็อกถึงด่าน <span id="max-unlocked-stage-label" class="text-lime-400">1</span>)
+              </span>
+              <span id="stage-target-hint" class="text-lime-400 text-base md:text-lg font-bold">เป้าหมาย: 850 คะแนน</span>
+            </div>
+            <div id="stage-buttons-container" class="flex flex-wrap items-center justify-between gap-2 p-3 rounded-2xl bg-slate-950/90 border border-cyan-500/40"></div>
+          </div>
+        </div>
+
+        <!-- Start Game CTA -->
+        <div class="mt-7 flex flex-col sm:flex-row gap-3">
+          <button
+            onclick="startGameRound()"
+            class="neon-btn flex-1 py-4 px-6 rounded-2xl bg-gradient-to-r from-lime-400 via-emerald-400 to-cyan-400 text-slate-950 font-black text-2xl md:text-3xl shadow-[0_0_25px_rgba(57,255,20,0.6)]"
+          >
+            🎣 เริ่มออกตกปลา (60 วิ)
+          </button>
+          <button
+            onclick="openShopFromStart()"
+            class="neon-btn py-4 px-6 rounded-2xl bg-slate-900 border-2 border-pink-500 text-pink-300 font-bold text-xl md:text-2xl"
+          >
+            🛒 ร้านค้า & AI
+          </button>
+        </div>
+      </div>
+
+      <!-- Right Column: Local High Score Leaderboard -->
+      <div class="lg:col-span-5 cyber-card rounded-3xl p-6 md:p-8 flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between border-b border-slate-700 pb-3">
+            <h2 class="text-2xl md:text-3xl font-black text-amber-300">🏆 สถิติสูงสุดในเครื่อง</h2>
+            <button onclick="resetAllProgress()" class="text-xs md:text-sm text-rose-400 hover:underline">รีเซ็ตข้อมูล</button>
+          </div>
+          <div id="leaderboard-list" class="mt-4 space-y-2.5 max-h-[340px] overflow-y-auto pr-1"></div>
+        </div>
+
+        <!-- Quick Gesture Guide for 2-Meter Viewing -->
+        <div class="mt-6 p-4 rounded-2xl bg-slate-900/95 border border-cyan-400/30">
+          <div class="text-lg md:text-xl font-bold text-cyan-300 mb-1">💡 วิธีเล่น & ไอเทมตัวช่วย 25 ชนิด:</div>
+          <ul class="text-base md:text-lg text-slate-200 space-y-1">
+            <li>🖐️ <b>แบมือ:</b> เลื่อนเป้าเล็ง · ✊ <b>กำมือค้าง:</b> เกี่ยวเบ็ดดึงปลา</li>
+            <li>🎣 <b>เบ็ด 20 ระดับ:</b> ยิ่งเบ็ดแพง พลังดึงและวงจับปลายิ่งกว้าง</li>
+            <li>⏱️ <b>ไอเทมเพิ่มเวลา 6 ระดับ:</b> ไล่ตั้งแต่ +10, +20, +30, +40, +50 ถึง +60 วินาที!</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- ========================================================= -->
+  <!-- SCREEN 2: GAMEPLAY HUD (หน้าเล่นเกม 60 วินาที)               -->
+  <!-- ========================================================= -->
+  <section id="screen-play" class="hidden fixed inset-0 z-30 pointer-events-none flex flex-col justify-between p-4 md:p-6">
+    <!-- Top Row HUD: Left = Rod Icon & Power, Right = Timer & Score -->
+    <div class="flex justify-between items-start gap-4 w-full mt-8 md:mt-4">
+      <!-- Top-Left: Active Fishing Rod Icon (Requirement #1) -->
+      <div class="hud-box rounded-3xl p-3 md:p-4 flex items-center gap-4 pointer-events-auto">
+        <div id="hud-rod-svg" class="w-16 h-16 md:w-20 md:h-20 rounded-2xl bg-slate-900 border-2 border-cyan-400 flex items-center justify-center shrink-0"></div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span id="hud-mode-pill" class="px-2.5 py-0.5 rounded-full text-xs md:text-sm font-bold bg-lime-400/20 text-lime-300 border border-lime-400">
+              กล้อง AI 60FPS
+            </span>
+            <span class="text-slate-300 text-sm md:text-base font-bold">ด่านที่ <span id="hud-stage-num" class="text-cyan-300">1</span></span>
+          </div>
+          <div id="hud-rod-name" class="text-xl md:text-3xl font-black text-white leading-tight mt-0.5">
+            เบ็ดไม้ไผ่ไซเบอร์
+          </div>
+          <div class="text-base md:text-xl text-cyan-300 font-bold">
+            พลังดึงปลา: <span id="hud-rod-power" class="text-lime-400">1.0x</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top-Right: 60s Timer & Score (2-meter readable) -->
+      <div class="hud-box rounded-3xl p-3 md:p-5 flex items-center gap-5 md:gap-8 pointer-events-auto">
+        <div class="text-center">
+          <div class="text-sm md:text-lg text-slate-300 font-bold">เวลาที่เหลือ</div>
+          <div id="hud-timer" class="font-cyber text-4xl md:text-6xl font-black text-amber-300">60s</div>
+        </div>
+        <div class="h-14 w-0.5 bg-slate-700"></div>
+        <div class="text-right">
+          <div class="text-sm md:text-lg text-slate-300 font-bold">
+            คะแนน (<span class="text-lime-300">เป้า: <span id="hud-target-score">850</span></span>)
+          </div>
+          <div id="hud-score" class="font-cyber text-4xl md:text-6xl font-black text-cyan-300">0</div>
+        </div>
+        <button
+          onclick="finishRound(true)"
+          title="หากกดออกก่อนเวลาหมด จะไม่นับว่าผ่านด่านแม้คะแนนถึงเป้า!"
+          class="neon-btn px-3 py-2 rounded-xl bg-rose-500/20 border border-rose-400 text-rose-300 font-bold text-xs md:text-sm text-center leading-tight"
+        >
+          🚪 ออกก่อน<br/><span class="text-[10px] text-amber-300">(ไม่ผ่านด่าน)</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Center Warning Banner when Hand is Out of Frame -->
+    <div id="hand-lost-banner" class="hidden self-center hud-box border-2 border-amber-400 px-6 py-3 rounded-2xl text-center">
+      <div class="text-2xl md:text-3xl font-black text-amber-300">
+        ✋ ยกมือให้อยู่ในกรอบกล้อง หรือคลิกเมาส์เพื่อจับปลา!
+      </div>
+    </div>
+
+    <!-- Bottom Row HUD: Active Items Bar (25 Items with Quick Filter) -->
+    <div class="w-full flex flex-col items-center gap-2 pointer-events-auto">
+      <div id="active-buffs-row" class="flex flex-wrap justify-center gap-1.5 max-w-6xl"></div>
+      <div class="flex items-center gap-2 bg-slate-950/90 border border-cyan-500/50 px-3 py-1 rounded-full text-xs md:text-sm">
+        <span class="text-cyan-300 font-bold">🎒 กระเป๋าไอเทม (25 ชนิด):</span>
+        <button id="btn-filter-owned" onclick="toggleHudItemFilter(true)" class="px-2.5 py-0.5 rounded-full bg-cyan-400 text-slate-950 font-black">เฉพาะที่มีของ</button>
+        <button id="btn-filter-all" onclick="toggleHudItemFilter(false)" class="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 font-bold">แสดงทั้ง 25 ชนิด</button>
+      </div>
+      <div id="hud-items-bar" class="hud-box rounded-3xl p-2 md:p-3 flex flex-wrap justify-center gap-1.5 md:gap-2 max-w-6xl max-h-36 overflow-y-auto"></div>
+    </div>
+  </section>
+
+  <!-- ========================================================= -->
+  <!-- SCREEN 3: SUMMARY, SHOP & AI ADVISOR (หน้าสรุปผลและร้านค้า)   -->
+  <!-- ========================================================= -->
+  <section id="screen-summary" class="hidden relative z-20 min-h-screen px-4 py-14 flex flex-col items-center">
+    <div class="w-full max-w-6xl space-y-6">
+
+      <!-- Top Summary Header Banner -->
+      <div class="cyber-card rounded-3xl p-6 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div class="flex flex-col md:flex-row items-center gap-4 text-center md:text-left">
+          <div id="summary-status-badge" class="px-5 py-3 rounded-2xl font-black text-2xl md:text-3xl bg-lime-400 text-slate-950">
+            🎉 ผ่านด่านสำเร็จ!
+          </div>
+          <div>
+            <div class="text-slate-300 text-lg md:text-xl font-bold">
+              สรุปผลด่านที่ <span id="summary-stage-num" class="text-cyan-300">1</span> · คะแนนที่ได้:
+              <span id="summary-score" class="font-cyber text-3xl md:text-4xl font-black text-amber-300">0</span>
+            </div>
+            <div id="summary-subtext" class="text-base md:text-lg text-slate-400">
+              เป้าหมายด่านนี้: 850 คะแนน
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-4">
+          <div class="px-5 py-2.5 rounded-2xl bg-slate-900 border-2 border-amber-400 text-right">
+            <div class="text-xs md:text-sm text-slate-300">เงินในกระเป๋า</div>
+            <div class="font-cyber text-2xl md:text-3xl font-black text-amber-300">
+              💰 <span id="summary-coins">0</span> G
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Middle Grid: Left = Caught Fish & Sell, Right = Smart AI Strategy Advisor -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- Caught Fish & Sell Box -->
+        <div class="lg:col-span-6 cyber-card rounded-3xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between border-b border-slate-700 pb-3">
+              <h3 class="text-2xl md:text-3xl font-black text-cyan-300">🐟 ปลาในกระชัง (รอขาย)</h3>
+              <span id="fish-bag-total-value" class="text-xl md:text-2xl font-black text-lime-400">มูลค่ารวม: 0 G</span>
+            </div>
+            <div id="caught-fish-list" class="mt-4 space-y-2.5 max-h-64 overflow-y-auto pr-1"></div>
+          </div>
+
+          <button
+            id="btn-sell-all"
+            onclick="sellAllCaughtFish()"
+            class="neon-btn mt-5 w-full py-4 rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-slate-950 font-black text-2xl md:text-3xl shadow-[0_0_20px_rgba(255,230,0,0.5)]"
+          >
+            💰 ขายปลาทั้งหมดรับเงินทันที
+          </button>
+        </div>
+
+        <!-- AI Chatbot Strategy Advisor (Calculates exact % Pass Chance) -->
+        <div class="lg:col-span-6 cyber-card rounded-3xl p-6 border-2 border-pink-500/60 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="w-12 h-12 rounded-2xl bg-pink-500/20 border-2 border-pink-400 flex items-center justify-center text-2xl">
+                  🤖
+                </div>
+                <div>
+                  <h3 class="text-2xl md:text-3xl font-black text-pink-300">AI ผู้ช่วยคำนวณโอกาสผ่านด่าน</h3>
+                  <div class="text-sm md:text-base text-slate-300">วิเคราะห์จากเบ็ด + ไอเทม + ความยากของด่านถัดไป</div>
+                </div>
+              </div>
+              <div class="text-right">
+                <div class="text-xs md:text-sm text-slate-300">โอกาสผ่านด่านเป้าหมาย</div>
+                <div id="ai-pass-percent" class="font-cyber text-3xl md:text-5xl font-black text-lime-400">85%</div>
+              </div>
+            </div>
+
+            <!-- Progress bar of pass probability -->
+            <div class="w-full h-4 rounded-full bg-slate-900 border border-slate-700 overflow-hidden mt-3">
+              <div id="ai-pass-bar" class="h-full bg-gradient-to-r from-pink-500 via-amber-400 to-lime-400 transition-all duration-300" style="width: 85%"></div>
+            </div>
+
+            <!-- AI Chat Message Box (Scrollable Chat History) -->
+            <div id="ai-chat-response" class="mt-4 p-4 rounded-2xl bg-slate-950/95 border border-pink-400/40 text-base md:text-lg text-slate-100 leading-relaxed h-48 overflow-y-auto space-y-2.5"></div>
+
+            <!-- Custom User Chat Input -->
+            <form onsubmit="handleCustomAIChat(event)" class="mt-3 flex gap-2">
+              <input
+                id="ai-chat-input"
+                type="text"
+                placeholder="💬 พิมพ์ถาม AI ได้เลย (เช่น ด่าน 5 ใช้เบ็ดอะไรดี, มีเงินเท่าไหร่, ไอเทมไหนดี)..."
+                class="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 border border-pink-400/70 text-white text-sm md:text-base font-bold focus:outline-none focus:ring-2 focus:ring-pink-400"
+              />
+              <button
+                type="submit"
+                class="neon-btn px-5 py-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-white font-black text-sm md:text-base shrink-0"
+              >
+                ส่งข้อความ
+              </button>
+            </form>
+          </div>
+
+          <div class="mt-3 grid grid-cols-3 gap-2">
+            <button onclick="askAI('analyze')" class="neon-btn py-2 px-3 rounded-xl bg-pink-500/20 border border-pink-400 text-pink-200 font-bold text-sm md:text-base">
+              📊 วิเคราะห์ด่านหน้า
+            </button>
+            <button onclick="askAI('best_buy')" class="neon-btn py-2 px-3 rounded-xl bg-cyan-500/20 border border-cyan-400 text-cyan-200 font-bold text-sm md:text-base">
+              🛒 ซื้ออะไรคุ้มสุด?
+            </button>
+            <button onclick="askAI('rare_tips')" class="neon-btn py-2 px-3 rounded-xl bg-lime-500/20 border border-lime-400 text-lime-200 font-bold text-sm md:text-base">
+              🐉 เทคนิคคอมโบ
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Shop Section: 20 Fishing Rods & 20 Helper Items -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <!-- 20 Fishing Rods Upgrade Shop -->
+        <div class="lg:col-span-7 cyber-card rounded-3xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-2xl md:text-3xl font-black text-cyan-300">🎣 อัปเกรดเบ็ดตกปลา (20 ระดับ)</h3>
+              <span class="text-xs md:text-sm text-lime-400 font-bold">ยิ่งระดับสูง ยิ่งดึงปลาบอสไว</span>
+            </div>
+            <div id="shop-rods-list" class="space-y-2.5 max-h-[470px] overflow-y-auto pr-2"></div>
+          </div>
+        </div>
+
+        <!-- 25 Consumable Items Shop -->
+        <div class="lg:col-span-5 cyber-card rounded-3xl p-6 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-2xl md:text-3xl font-black text-amber-300">⚡ ไอเทมตัวช่วย (25 ชนิด)</h3>
+              <span class="text-xs md:text-sm text-slate-400 font-bold">กดใช้ในเกมได้ทันที</span>
+            </div>
+            <div class="mb-3">
+              <input
+                id="shop-item-search"
+                type="text"
+                oninput="renderSummaryPanels()"
+                placeholder="🔍 ค้นหาไอเทมจาก 25 ชนิด (เช่น เวลา, +60, บอส, คูณ, แม่เหล็ก)..."
+                class="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-amber-400/60 text-white text-sm md:text-base font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+            </div>
+            <div id="shop-items-list" class="space-y-2.5 max-h-[420px] overflow-y-auto pr-2"></div>
+          </div>
+
+          <div class="mt-6 flex flex-col sm:flex-row gap-3">
+            <button
+              id="btn-next-stage"
+              onclick="playNextOrRetryStage()"
+              class="neon-btn flex-1 py-4 px-5 rounded-2xl bg-gradient-to-r from-lime-400 to-cyan-400 text-slate-950 font-black text-2xl md:text-3xl"
+            >
+              ▶️ ลุยด่านถัดไป!
+            </button>
+            <button
+              onclick="goToStartScreen()"
+              class="neon-btn py-4 px-5 rounded-2xl bg-slate-900 border-2 border-slate-600 text-slate-200 font-bold text-xl"
+            >
+              🏠 หน้าแรก
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================= -->
+      <!-- FISH SYNTHESIS & TRADE CENTER (หลอมปลา & แลกเบ็ด/ไอเทม)     -->
+      <!-- ========================================================= -->
+      <div class="cyber-card rounded-3xl p-6 border-2 border-lime-400/60">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-slate-700 pb-4">
+          <div>
+            <h3 class="text-2xl md:text-3xl font-black text-lime-300">
+              🧬 ศูนย์หลอมปลาไซเบอร์ & แลกเปลี่ยนระดับฮาร์ดคอร์ (MMORPG)
+            </h3>
+            <p class="text-sm md:text-base text-slate-300">
+              บทพิสูจน์ความอดทน! การหลอมใช้ปลาจำนวนมาก + ค่าไฟไซเบอร์ และมี <b>โอกาสสำเร็จ (%)</b> (หากพลาดจะเสียปลาครึ่งหนึ่ง แต่สะสมแต้มการันตี +15% ทุกครั้ง!)
+            </p>
+          </div>
+          <div class="px-4 py-2 rounded-2xl bg-slate-900 border border-lime-400/50 text-right shrink-0">
+            <div class="text-xs text-slate-400">จำนวนปลาในกระชังทั้งหมด</div>
+            <div id="total-fish-count-badge" class="font-cyber text-xl md:text-2xl font-black text-lime-400">0 ตัว</div>
+          </div>
+        </div>
+
+        <!-- Synthesis Status Feedback Banner -->
+        <div id="synthesis-Result-banner" class="hidden mt-4 p-3.5 rounded-2xl border-2 text-center font-black text-lg md:text-xl transition-all"></div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-5">
+          <!-- Column 1: Fish Tier Synthesis (Low Tier -> High Tier) -->
+          <div class="p-4 rounded-2xl bg-slate-950/90 border border-cyan-500/40 flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <h4 class="text-lg md:text-xl font-black text-cyan-300">🔄 1. หลอมปลาข้ามสายพันธุ์</h4>
+                <span class="text-xs px-2 py-0.5 rounded bg-rose-500/20 border border-rose-400 text-rose-300 font-bold">HARDCORE %</span>
+              </div>
+              <p class="text-xs md:text-sm text-slate-400 mb-3">
+                ใช้ปลาจำนวนมาก + เงิน G เพื่อกลายพันธุ์ขึ้น 1 ขั้น ยิ่งระดับสูงโอกาสติดยิ่งท้าทาย (มีระบบสะสม Pity การันตี)
+              </p>
+              <div id="fish-fusion-list" class="space-y-2.5 max-h-[420px] overflow-y-auto pr-1"></div>
+            </div>
+          </div>
+
+          <!-- Column 2: Trade Fish for Rods -->
+          <div class="p-4 rounded-2xl bg-slate-950/90 border border-lime-500/40 flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <h4 class="text-lg md:text-xl font-black text-lime-300">🎣 2. ใบสั่งทำเบ็ดระดับตำนาน</h4>
+                <span class="text-xs px-2 py-0.5 rounded bg-lime-500/20 border border-lime-400 text-lime-300 font-bold">โอกาสติด % ตามระดับ</span>
+              </div>
+              <p class="text-xs md:text-sm text-slate-400 mb-3">
+                ใช้ปลา 2 สายพันธุ์สร้างเบ็ด ยิ่งเบ็ดโหดโอกาสติดยิ่งน้อย! (หากพลาดเสียปลา 50% แต่ได้โบนัสการันตี +12% ทุกครั้ง)
+              </p>
+              <div id="fish-trade-rods-list" class="space-y-2.5 max-h-[420px] overflow-y-auto pr-1"></div>
+            </div>
+          </div>
+
+          <!-- Column 3: Trade Fish for Items -->
+          <div class="p-4 rounded-2xl bg-slate-950/90 border border-pink-500/40 flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <h4 class="text-lg md:text-xl font-black text-pink-300">⚡ 3. สังเวยปลาแลกไอเทม</h4>
+                <span class="text-xs px-2 py-0.5 rounded bg-pink-500/20 border border-pink-400 text-pink-300 font-bold">โหดตามระดับ</span>
+              </div>
+              <p class="text-xs md:text-sm text-slate-400 mb-3">
+                ไอเทมระดับสูงต้องใช้ความอดทนในการสะสมปลา 2 ชนิดพร้อมกันตามความทรงพลังของไอเทม
+              </p>
+              <div id="fish-trade-items-list" class="space-y-2.5 max-h-[420px] overflow-y-auto pr-1"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ========================================================= -->
+  <!-- GAME DATA, LOGIC, 60FPS CAMERA & P5.JS ENGINE             -->
+  <!-- ========================================================= -->
+  <script>
+    /*************************************************************
+     * 1. GAME CONFIGURATION: 20 RODS, 5 FISH TIERS, 14 ITEMS, INFINITE STAGES
+     *************************************************************/
+    const RODS = [
+      { id: 1, name: "1. เบ็ดไม้ไผ่ไซเบอร์", power: 1.0, radius: 52, price: 0, color: "#00f3ff", desc: "เบ็ดเริ่มต้น เหมาะกับปลาเล็กด่านแรกๆ" },
+      { id: 2, name: "2. เบ็ดคาร์บอนนีออน", power: 1.45, radius: 56, price: 250, color: "#39ff14", desc: "ดึงปลาเร็วขึ้น 45% จับปลาระดับกลางสบาย" },
+      { id: 3, name: "3. เบ็ดแม่เหล็กซิลเวอร์", power: 2.0, radius: 60, price: 750, color: "#a855f7", desc: "พลังดึง 2 เท่า จับปลาหายากได้ดี" },
+      { id: 4, name: "4. เบ็ดทองคำควอนตัม", power: 2.8, radius: 64, price: 1800, color: "#ffe600", desc: "พลังดึงสูง ปลาแรร์หลุดยากขึ้นมาก" },
+      { id: 5, name: "5. เบ็ดพลาสมาจักรพรรดิ", power: 4.0, radius: 68, price: 4200, color: "#ff00ea", desc: "ดึงปลาบอสระยะต้นขึ้นไวมาก" },
+      { id: 6, name: "6. เบ็ดไทเทเนียมไฮเปอร์", power: 5.5, radius: 72, price: 9500, color: "#38bdf8", desc: "โครงสร้างไทเทเนียม ทนแรงดึงด่านระดับกลาง" },
+      { id: 7, name: "7. เบ็ดเลเซอร์โฟตอน", power: 7.5, radius: 76, price: 22000, color: "#4ade80", desc: "สายเบ็ดลำแสงโฟตอน ล็อกเป้าปลาแม่นยำ" },
+      { id: 8, name: "8. เบ็ดคริสตัลอาร์คติก", power: 10.0, radius: 80, price: 50000, color: "#60a5fa", desc: "แผ่ไอเย็นลดการดิ้นของปลา พลังดึง 10 เท่า" },
+      { id: 9, name: "9. เบ็ดแม็กม่าวัลแคน", power: 13.5, radius: 84, price: 110000, color: "#f97316", desc: "หลอมจากหินหนืดไซเบอร์ ดึงปลาใหญ่รุนแรง" },
+      { id: 10, name: "10. เบ็ดสายฟ้าธันเดอร์โบลต์", power: 18.0, radius: 88, price: 240000, color: "#facc15", desc: "ช็อตปลาด้วยกระแสไฟฟ้าแรงสูงขณะดึง" },
+      { id: 11, name: "11. เบ็ดมรกตไซเบอร์เนติก", power: 24.0, radius: 92, price: 520000, color: "#10b981", desc: "เสริมชิป AI ประมวลผลแรงดึงอัตโนมัติ" },
+      { id: 12, name: "12. เบ็ดทับทิมโอเวอร์ไดรฟ์", power: 32.0, radius: 96, price: 1150000, color: "#f43f5e", desc: "เร่งมอเตอร์รอกไฟฟ้าเกินพิกัด 32 เท่า" },
+      { id: 13, name: "13. เบ็ดกราวิตี้หลุมดำ", power: 43.0, radius: 100, price: 2500000, color: "#8b5cf6", desc: "สร้างสนามแรงโน้มถ่วงบีบอัดให้ปลาหมดแรง" },
+      { id: 14, name: "14. เบ็ดเนบิวลาดาราจักร", power: 58.0, radius: 105, price: 5500000, color: "#ec4899", desc: "ดูดซับพลังงานดวงดาว ดึงปลาบอสด่านลึก" },
+      { id: 15, name: "15. เบ็ดซูเปอร์โนวา", power: 78.0, radius: 110, price: 12000000, color: "#fbbf24", desc: "ระเบิดพลังดึงระดับซูเปอร์โนวา 78 เท่า" },
+      { id: 16, name: "16. เบ็ดมิติควอนตัม X", power: 105.0, radius: 115, price: 26000000, color: "#06b6d4", desc: "วาร์ปปลาข้ามมิติเข้าสู่มืออย่างรวดเร็ว" },
+      { id: 17, name: "17. เบ็ดราชันย์มังกรสมุทร", power: 140.0, radius: 120, price: 58000000, color: "#ef4444", desc: "สร้างจากเกล็ดมังกรสมุทร สยบปลาทุกสายพันธุ์" },
+      { id: 18, name: "18. เบ็ดเซเลสเทียลเทพเจ้า", power: 190.0, radius: 126, price: 130000000, color: "#fde047", desc: "ศาสตราวุธแห่งท้องทะเลยุค 2099" },
+      { id: 19, name: "19. เบ็ดอินฟินิตี้พาราด็อกซ์", power: 260.0, radius: 132, price: 300000000, color: "#c084fc", desc: "ฉีกกฎฟิสิกส์ทุกด่านด้วยพลังดึง 260 เท่า" },
+      { id: 20, name: "20. เบ็ดออมนิเวิร์สผู้สร้าง (MAX)", power: 360.0, radius: 145, price: 750000000, color: "#00f3ff", desc: "เบ็ดขั้นสูงสุดของจักรวาล รัศมีกว้างและแรงดึงไร้เทียมทาน" }
+    ];
+
+    const FISH_TYPES = [
+      { tier: 1, name: "ปลาซาร์ดีนนีออน", points: 30, gold: 25, difficulty: 0.65, speed: 1.9, size: 38, color: "#00f3ff" },
+      { tier: 2, name: "ปลากะพงแสงจันทร์", points: 55, gold: 45, difficulty: 0.9, speed: 2.1, size: 42, color: "#38bdf8" },
+      { tier: 3, name: "ปลาการ์ตูนไซเบอร์", points: 90, gold: 75, difficulty: 1.15, speed: 2.3, size: 45, color: "#fb923c" },
+      { tier: 4, name: "ปลาหมึกเรืองแสง", points: 140, gold: 120, difficulty: 1.45, speed: 2.5, size: 48, color: "#39ff14" },
+      { tier: 5, name: "ปลาปักเป้าหนามเลเซอร์", points: 210, gold: 180, difficulty: 1.8, speed: 2.7, size: 52, color: "#a3e635" },
+      { tier: 6, name: "ปลาทูน่าเทอร์โบ", points: 310, gold: 270, difficulty: 2.2, speed: 3.1, size: 56, color: "#60a5fa" },
+      { tier: 7, name: "ปลากระเบนวงแหวน", points: 450, gold: 400, difficulty: 2.7, speed: 3.3, size: 60, color: "#a855f7" },
+      { tier: 8, name: "ปลาไหลไฟฟ้าแรงสูง", points: 650, gold: 580, difficulty: 3.3, speed: 3.6, size: 63, color: "#facc15" },
+      { tier: 9, name: "ปลาดาบเงินควอนตัม", points: 950, gold: 850, difficulty: 4.0, speed: 3.9, size: 67, color: "#e2e8f0" },
+      { tier: 10, name: "ปลาตกเบ็ดเหวน้ำลึก", points: 1400, gold: 1250, difficulty: 4.9, speed: 4.1, size: 70, color: "#f43f5e" },
+      { tier: 11, name: "เต่าสมุทรคริสตัล", points: 2000, gold: 1850, difficulty: 6.0, speed: 3.5, size: 74, color: "#2dd4bf" },
+      { tier: 12, name: "ปลาฉลามหัวค้อนนีออน", points: 2900, gold: 2700, difficulty: 7.4, speed: 4.4, size: 78, color: "#fbbf24" },
+      { tier: 13, name: "ฉลามขาวเลเซอร์ทองคำ", points: 4200, gold: 4000, difficulty: 9.2, speed: 4.7, size: 82, color: "#ffe600" },
+      { tier: 14, name: "ปลาวาฬเพชฌฆาตพลาสมา", points: 6200, gold: 6000, difficulty: 11.5, speed: 4.9, size: 86, color: "#c084fc" },
+      { tier: 15, name: "พญางูทะเลอาร์คติก", points: 9200, gold: 9000, difficulty: 14.5, speed: 5.2, size: 90, color: "#38bdf8" },
+      { tier: 16, name: "คราเคนจักรกลยักษ์ (BOSS)", points: 14000, gold: 13800, difficulty: 18.5, speed: 5.4, size: 94, color: "#fb7185" },
+      { tier: 17, name: "วาฬสีน้ำเงินเนบิวลา (BOSS)", points: 22000, gold: 22000, difficulty: 24.0, speed: 5.1, size: 100, color: "#818cf8" },
+      { tier: 18, name: "เลวีอาธานเพลิงแม็กม่า (BOSS)", points: 35000, gold: 36000, difficulty: 31.0, speed: 5.7, size: 104, color: "#f97316" },
+      { tier: 19, name: "มังกรสมุทรพลาสมา (BOSS)", points: 55000, gold: 58000, difficulty: 40.0, speed: 6.0, size: 110, color: "#ff00ea" },
+      { tier: 20, name: "ราชันย์มังกรออมนิเวิร์ส (GOD BOSS)", points: 95000, gold: 100000, difficulty: 52.0, speed: 6.4, size: 118, color: "#00f3ff" }
+    ];
+
+    // 25 Curated Helper Items (Includes 6 Tiers of Time Extension: +10s, +20s, +30s, +40s, +50s, +60s with High-Stakes Pricing)
+    const ITEMS = [
+      { key: "rareBait", num: "1", icon: "🪱", name: "1. เหยื่อล่อปลาแรร์", price: 180, desc: "เพิ่มอัตราเกิดปลาแรร์และปลาบอส (★10-★20) นาน 15 วิ", effectType: "rareBait", val: 15 },
+      { key: "timePlus10", num: "2", icon: "⏱️", name: "2. นาฬิกาหยุดเวลา (+10 วิ)", price: 1500, desc: "เพิ่มเวลาตกปลาทันที +10 วินาที (ระดับเริ่มต้น)", effectType: "addTime", val: 10 },
+      { key: "doubleScore", num: "3", icon: "✨", name: "3. ชิปคูณคะแนน X2", price: 320, desc: "ได้คะแนนจากการจับปลา 2 เท่านาน 15 วิ", effectType: "doubleScore", val: 15 },
+      { key: "magnet", num: "4", icon: "🧲", name: "4. แม่เหล็กดูดปลา", price: 400, desc: "ดูดปลาเข้าหาเบ็ดและดึงเร็วขึ้น 50% นาน 12 วิ", effectType: "magnet", val: 12 },
+      { key: "freezeIce", num: "5", icon: "❄️", name: "5. ระเบิดน้ำแข็งไซเบอร์", price: 550, desc: "แช่แข็งปลาทุกตัวให้ว่ายช้าลง 70% นาน 12 วิ", effectType: "freezeIce", val: 12 },
+      { key: "electroShock", num: "6", icon: "⚡", name: "6. สายฟ้าช็อตปลา", price: 750, desc: "ช็อตปลาทุกตัวในจอให้หลอดดึงเริ่มต้นที่ 55% ทันที", effectType: "shockProgress", val: 55 },
+      { key: "goldRush", num: "7", icon: "💰", name: "7. เซรุ่มปลาทองคำ", price: 950, desc: "จับปลาได้จำนวนตัวเข้ากระชัง 2 เท่า (ขายได้เงิน X2) 15 วิ", effectType: "goldRush", val: 15 },
+      { key: "giantHook", num: "8", icon: "🎯", name: "8. วงแหวนขยายเบ็ดยักษ์", price: 1200, desc: "ขยายวงจับปลาให้กว้างขึ้น +75px นาน 15 วิ", effectType: "giantHook", val: 15 },
+      { key: "frenzySwarm", num: "9", icon: "🌊", name: "9. คลื่นโซนาร์เรียกฝูงปลา", price: 1600, desc: "เรียกฝูงปลาออกมาเพิ่มทันที +10 ตัวเต็มหน้าจอ", effectType: "spawnSwarm", val: 10 },
+      { key: "noSlipLock", num: "0", icon: "🔒", name: "10. สลักล็อกสายเบ็ด", price: 2200, desc: "หลอดดึงปลาไม่ลดลงเลยแม้ปล่อยมือ นาน 20 วิ", effectType: "noSlipLock", val: 20 },
+      { key: "bossPheromone", num: "Q", icon: "🐉", name: "11. ฟีโรโมนมังกรสมุทร", price: 3500, desc: "เรียกปลาบอสมังกรสมุทร (★19) ออกมาทันที 3 ตัว!", effectType: "spawnBoss", val: 3 },
+      { key: "tripleScore", num: "W", icon: "🔥", name: "12. โอเวอร์คล็อกคะแนน X3", price: 5000, desc: "คูณคะแนนที่ได้จากการจับปลา 3 เท่านาน 15 วิ", effectType: "tripleScore", val: 15 },
+      { key: "timePlus20", num: "E", icon: "⏲️", name: "13. แบตเตอรี่ควอนตัม (+20 วิ)", price: 12000, desc: "เพิ่มเวลาตกปลาทันที +20 วินาที สำหรับด่านระดับกลาง", effectType: "addTime", val: 20 },
+      { key: "laserNet", num: "R", icon: "🕸️", name: "14. แหเลเซอร์ควอนตัม", price: 15000, desc: "รวบจับปลาใกล้ตัวเบ็ดทันที 4 ตัวโดยไม่ต้องดึง!", effectType: "catchNearest", val: 4 },
+      { key: "empNuke", num: "T", icon: "☢️", name: "15. ระเบิดคลื่น EMP ล้างจอ", price: 28000, desc: "จับปลาทุกตัวที่ว่ายอยู่ในหน้าจอขึ้นกระชังทันที!", effectType: "empAll", val: 1 },
+      { key: "powerBoost", num: "Y", icon: "💪", name: "16. มอเตอร์ไฮดรอลิกแรงสูง", price: 45000, desc: "เพิ่มพลังดึงเบ็ด +100% นาน 20 วินาที", effectType: "powerBoost", val: 20 },
+      { key: "timePlus30", num: "U", icon: "⏳", name: "17. แกนพลังงานโครนอส (+30 วิ)", price: 85000, desc: "เพิ่มเวลาตกปลาทันที +30 วินาที (ครึ่งรอบเต็ม!)", effectType: "addTime", val: 30 },
+      { key: "autoReel", num: "I", icon: "🤖", name: "18. โดรนช่วยดึงสายเบ็ดออโต้", price: 140000, desc: "ช่วยดึงปลาทุกตัวในจออัตโนมัติเป็นเวลา 20 วินาที", effectType: "autoReel", val: 20 },
+      { key: "pentaScore", num: "O", icon: "🌟", name: "19. ชิปโอเวอร์ไดรฟ์คะแนน X5", price: 260000, desc: "คูณคะแนนที่ได้จากการจับปลา 5 เท่านาน 20 วินาที!", effectType: "pentaScore", val: 20 },
+      { key: "timePlus40", num: "P", icon: "🕰️", name: "20. ปฏิทินบิดเบือนมิติ (+40 วิ)", price: 480000, desc: "ยืดเวลาตกปลาออกไปอีก +40 วินาที เหมาะกับล่าบอสใหญ่", effectType: "addTime", val: 40 },
+      { key: "decaScore", num: "A", icon: "👑", name: "21. ชิปจักรพรรดิคูณคะแนน X10", price: 950000, desc: "คูณคะแนนจากการจับปลาถึง 10 เท่านาน 20 วินาที!", effectType: "decaScore", val: 20 },
+      { key: "timePlus50", num: "S", icon: "⌛", name: "22. รอยแยกกาลเวลาไฮเปอร์ (+50 วิ)", price: 2400000, desc: "เพิ่มเวลาตกปลาทันที +50 วินาที ล่าปลาแรร์ได้จุใจ!", effectType: "addTime", val: 50 },
+      { key: "empAndBoss", num: "D", icon: "🌌", name: "23. ซูเปอร์โนวากวาดสมุทร", price: 5500000, desc: "กวาดปลาทั้งจอทันที + เรียกบอสมังกรออกมาแทนที่ 6 ตัว!", effectType: "empAndBoss", val: 6 },
+      { key: "timePlus60", num: "F", icon: "♾️", name: "24. มหาเวทย์หยุดจักรวาล (+60 วิ)", price: 12500000, desc: "เพิ่มเวลาตกปลาสูงสุด +60 วินาทีเต็ม (เท่ากับได้เล่นเพิ่มอีก 1 เกม!)", effectType: "addTime", val: 60 },
+      { key: "ultimate20", num: "G", icon: "🔱", name: "25. มหาเวทย์ออมนิเวิร์ส (MAX)", price: 35000000, desc: "จับปลาทั้งจอ + เรียกบอส 12 ตัว + เปิดทุกบัฟ + เวลา 60 วิ!", effectType: "ultimate100", val: 1 }
+    ];
+
+    let showOnlyOwnedHudItems = true;
+
+    const STAGE_ZONE_NAMES = [
+      "อ่าวนีออนเริ่มต้น",
+      "แนวปะการังแสงจันทร์",
+      "ร่องน้ำลึกไซเบอร์",
+      "หุบเหวฉลามเลเซอร์",
+      "วิหารมังกรสมุทร",
+      "ทะเลหมอกพลาสมา",
+      "ซากนครแอตแลนติส 2099",
+      "กระแสน้ำวนควอนตัม",
+      "อาณาจักรคราเคนจักรกล",
+      "แกนกลางมหาสมุทรดาราจักร"
+    ];
+
+    // Dynamic Infinite Stage Generator (Stage 1 to Infinity)
+    function getStageConfig(stageNum) {
+      const s = Math.max(1, parseInt(stageNum, 10) || 1);
+      const zoneName = STAGE_ZONE_NAMES[(s - 1) % STAGE_ZONE_NAMES.length];
+      const rankTier = Math.floor((s - 1) / STAGE_ZONE_NAMES.length) + 1;
+      const fullName = rankTier > 1 ? `${zoneName} (ระดับ ${rankTier})` : zoneName;
+
+      // Challenging target score and difficulty right from Stage 1 (starts at 850 pts and scales up)
+      const targetScore = Math.round(850 * Math.pow(1.48, s - 1) + (s - 1) * 450);
+      const diffMult = Number((1.25 + (s - 1) * 0.36 + Math.pow(s - 1, 1.38) * 0.18).toFixed(2));
+      const goldBonusMult = Number((1.0 + (s - 1) * 0.35).toFixed(2));
+
+      // Calculate dynamic spawn weights across all 20 fish species based on stage
+      const weights = FISH_TYPES.map((ft) => {
+        const tier = ft.tier;
+        // Center tier shifts upward as stage increases
+        const preferredTier = Math.min(20, 1.5 + (s - 1) * 0.85);
+        const distFromPreferred = Math.abs(tier - preferredTier);
+        if (tier > s * 2 + 2) return 0; // Very high-tier bosses unlock gradually as stage progresses
+        return Math.max(1, Math.round(60 * Math.exp(-0.22 * distFromPreferred)));
+      });
+
+      return {
+        stage: s,
+        name: fullName,
+        targetScore,
+        diffMult,
+        goldBonusMult,
+        weights
+      };
+    }
+
+    /*************************************************************
+     * 2. PERSISTENT STATE & MULTI-ACCOUNT AUTH (LocalStorage)
+     *************************************************************/
+    const STORAGE_KEY = "NEON_ANGLER_SAVE_V3";
+    const ACCOUNTS_KEY = "NEON_ANGLER_ACCOUNTS_V1";
+    const SESSION_USER_KEY = "NEON_ANGLER_CURRENT_USER_V1";
+
+    let accountsDB = {}; // { [username]: { password, profile: {...} } }
+    let currentUsername = null;
+
+    function createDefaultItemsState() {
+      const obj = {};
+      ITEMS.forEach((it) => (obj[it.key] = 0));
+      return obj;
+    }
+
+    function createDefaultFishBagState() {
+      const bag = {};
+      FISH_TYPES.forEach((ft) => (bag[ft.tier] = 0));
+      return bag;
+    }
+
+    function createDefaultProfile(username = "Angler-01") {
+      return {
+        name: username,
+        coins: 100,
+        ownedRods: [1],
+        equippedRodId: 1,
+        unlockedStage: 1,
+        selectedStage: 1,
+        items: createDefaultItemsState(),
+        fishBag: createDefaultFishBagState(),
+        fusionPity: {}, // Tracks failed synthesis attempts per tier for bonus success rate
+        rodCraftPity: {} // Tracks failed rod crafting attempts per rodId for bonus success rate
+      };
+    }
+
+    let playerState = {
+      ...createDefaultProfile("Angler-01"),
+      highScores: []
+    };
+
+    function loadState() {
+      try {
+        const rawGlobal = localStorage.getItem(STORAGE_KEY);
+        let sharedHighScores = [];
+        if (rawGlobal) {
+          const parsedGlobal = JSON.parse(rawGlobal);
+          sharedHighScores = Array.isArray(parsedGlobal.highScores) ? parsedGlobal.highScores : [];
+        }
+
+        const rawAccounts = localStorage.getItem(ACCOUNTS_KEY);
+        if (rawAccounts) {
+          accountsDB = JSON.parse(rawAccounts) || {};
+        }
+
+        const savedUser = localStorage.getItem(SESSION_USER_KEY);
+        if (savedUser && accountsDB[savedUser]) {
+          currentUsername = savedUser;
+          const prof = accountsDB[savedUser].profile || createDefaultProfile(savedUser);
+          // Migrate legacy timePlus item key to timePlus10 if present
+          if (prof.items && prof.items.timePlus) {
+            prof.items.timePlus10 = (prof.items.timePlus10 || 0) + prof.items.timePlus;
+            delete prof.items.timePlus;
+          }
+          playerState = {
+            ...createDefaultProfile(savedUser),
+            ...prof,
+            name: savedUser,
+            items: { ...createDefaultProfile().items, ...(prof.items || {}) },
+            fishBag: { ...createDefaultProfile().fishBag, ...(prof.fishBag || {}) },
+            fusionPity: { ...(prof.fusionPity || {}) },
+            rodCraftPity: { ...(prof.rodCraftPity || {}) },
+            highScores: sharedHighScores
+          };
+        } else {
+          currentUsername = null;
+          playerState = {
+            ...createDefaultProfile("Guest"),
+            highScores: sharedHighScores
+          };
+        }
+      } catch (e) {
+        console.warn("Load state error:", e);
+      }
+    }
+
+    function saveState() {
+      try {
+        if (currentUsername && accountsDB[currentUsername]) {
+          accountsDB[currentUsername].profile = {
+            name: currentUsername,
+            coins: playerState.coins,
+            ownedRods: playerState.ownedRods,
+            equippedRodId: playerState.equippedRodId,
+            unlockedStage: playerState.unlockedStage,
+            selectedStage: playerState.selectedStage,
+            items: playerState.items,
+            fishBag: playerState.fishBag,
+            fusionPity: playerState.fusionPity || {},
+            rodCraftPity: playerState.rodCraftPity || {}
+          };
+          localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accountsDB));
+        }
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({
+            highScores: playerState.highScores
+          })
+        );
+      } catch (e) {}
+    }
+
+    function setAuthMessage(msg, isError = false) {
+      const el = document.getElementById("auth-feedback-msg");
+      if (!el) return;
+      el.textContent = msg;
+      el.className = `text-xs md:text-sm font-bold mt-1.5 min-h-[18px] ${
+        isError ? "text-rose-400" : "text-lime-400"
+      }`;
+    }
+
+    function handleLoginOrRegister(mode) {
+      ensureAudio();
+      const userEl = document.getElementById("input-username");
+      const passEl = document.getElementById("input-password");
+      const username = (userEl?.value || "").trim();
+      const password = (passEl?.value || "").trim();
+
+      if (!username || !password) {
+        setAuthMessage("⚠️ กรุณากรอกทั้งชื่อผู้ใช้ (Username) และรหัสผ่าน", true);
+        return;
+      }
+
+      if (mode === "register") {
+        if (accountsDB[username]) {
+          setAuthMessage("⚠️ ชื่อผู้ใช้นี้มีคนใช้แล้ว กรุณาตั้งชื่ออื่น หรือกดเข้าสู่ระบบ", true);
+          return;
+        }
+        accountsDB[username] = {
+          password,
+          profile: createDefaultProfile(username)
+        };
+        currentUsername = username;
+        localStorage.setItem(SESSION_USER_KEY, username);
+        loadState();
+        saveState();
+        playTone(680, 0.16, "triangle", 0.14);
+        setAuthMessage(`✅ สมัครและเข้าสู่ระบบชื่อ "${username}" สำเร็จ!`);
+        renderStartScreen();
+      } else {
+        const account = accountsDB[username];
+        if (!account) {
+          setAuthMessage("⚠️ ไม่พบชื่อผู้ใช้นี้ กรุณากดปุ่ม 'สมัครใหม่' ก่อนครับ", true);
+          return;
+        }
+        if (account.password !== password) {
+          setAuthMessage("❌ รหัสผ่านไม่ถูกต้อง กรุณาลองอีกครั้ง", true);
+          return;
+        }
+        currentUsername = username;
+        localStorage.setItem(SESSION_USER_KEY, username);
+        loadState();
+        playTone(620, 0.15, "sine", 0.14);
+        setAuthMessage(`✅ ยินดีต้อนรับกลับมา "${username}"!`);
+        renderStartScreen();
+      }
+    }
+
+    function logoutAccount() {
+      saveState();
+      currentUsername = null;
+      localStorage.removeItem(SESSION_USER_KEY);
+      loadState();
+      const passEl = document.getElementById("input-password");
+      if (passEl) passEl.value = "";
+      setAuthMessage("ออกจากระบบแล้ว สามารถเข้าสู่ระบบหรือสมัครบัญชีใหม่ได้");
+      renderStartScreen();
+    }
+
+    function resetAllProgress() {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(ACCOUNTS_KEY);
+      localStorage.removeItem(SESSION_USER_KEY);
+      location.reload();
+    }
+
+    /*************************************************************
+     * 3. SYNTHWAVE ROYALTY-FREE WEB AUDIO BGM & SFX
+     *************************************************************/
+    let audioCtx = null;
+    let bgmPlaying = false;
+    let bgmTimer = null;
+    let noteStep = 0;
+    let masterVolume = 0.7; // 0.0 to 1.0 (Default 70%)
+
+    function loadVolumeSetting() {
+      try {
+        const savedVol = localStorage.getItem("NEON_ANGLER_VOLUME");
+        if (savedVol !== null) {
+          const v = Math.max(0, Math.min(100, parseInt(savedVol, 10)));
+          masterVolume = v / 100;
+          const slider = document.getElementById("bgm-volume-slider");
+          const label = document.getElementById("bgm-volume-label");
+          if (slider) slider.value = v;
+          if (label) label.textContent = `${v}%`;
+          updateVolumeIcon(v);
+        }
+      } catch (e) {}
+    }
+
+    function updateVolumeIcon(val) {
+      const iconEl = document.getElementById("vol-icon");
+      if (!iconEl) return;
+      if (val <= 0) iconEl.textContent = "🔇";
+      else if (val < 50) iconEl.textContent = "🔉";
+      else iconEl.textContent = "🔊";
+    }
+
+    function changeMasterVolume(val) {
+      const v = Math.max(0, Math.min(100, parseInt(val, 10) || 0));
+      masterVolume = v / 100;
+      const label = document.getElementById("bgm-volume-label");
+      if (label) label.textContent = `${v}%`;
+      updateVolumeIcon(v);
+      try {
+        localStorage.setItem("NEON_ANGLER_VOLUME", String(v));
+      } catch (e) {}
+    }
+
+    function ensureAudio() {
+      if (!audioCtx) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContextClass();
+      }
+      if (audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
+    }
+
+    function playTone(freq, duration = 0.14, type = "sawtooth", vol = 0.08) {
+      if (!audioCtx || masterVolume <= 0.001) return;
+      const effectiveVol = vol * masterVolume;
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, now);
+      gain.gain.setValueAtTime(effectiveVol, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + duration);
+    }
+
+    function playCatchSFX(tier) {
+      if (!audioCtx) return;
+      const base = 300 + tier * 28;
+      playTone(base, 0.12, "sine", 0.1);
+      setTimeout(() => playTone(base * 1.25, 0.22, "triangle", 0.11), 65);
+    }
+
+    // Soft, Warm, Relaxing Chill/Ambient Ocean Music Generator
+    function playChillNote(freq, duration = 1.6, vol = 0.035, type = "sine") {
+      if (!audioCtx || !bgmPlaying || masterVolume <= 0.001) return;
+      const effectiveVol = Math.max(0.0002, vol * masterVolume);
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, now);
+
+      // Gentle attack and slow dreamy release
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(effectiveVol, now + 0.18);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + duration + 0.05);
+    }
+
+    function toggleBGM() {
+      ensureAudio();
+      bgmPlaying = !bgmPlaying;
+      const btn = document.getElementById("btn-bgm");
+      if (bgmPlaying) {
+        btn.textContent = "🔊 เพลงสบายๆ: เปิด";
+        // Dreamy Major 7th / 9th Pentatonic Chords (Fmaj7 -> Em7 -> Dm7 -> Cmaj7)
+        const chillChords = [
+          [174.61, 220.00, 261.63, 329.63], // Fmaj7
+          [164.81, 196.00, 246.94, 293.66], // Em7
+          [146.83, 174.61, 220.00, 261.63], // Dm7
+          [130.81, 164.81, 196.00, 246.94]  // Cmaj7
+        ];
+        const melodyNotes = [523.25, 587.33, 659.25, 783.99, 880.00, 659.25, 587.33, 523.25];
+
+        noteStep = 0;
+        bgmTimer = setInterval(() => {
+          if (!bgmPlaying) return;
+          const chordIdx = Math.floor(noteStep / 4) % chillChords.length;
+          const chord = chillChords[chordIdx];
+          const beatInBar = noteStep % 4;
+
+          // Play warm sustained pad chord on the first beat of each bar
+          if (beatInBar === 0) {
+            chord.forEach((f, idx) => {
+              playChillNote(f, 2.4, idx === 0 ? 0.04 : 0.022, "sine");
+            });
+          }
+
+          // Gentle harp/rhodes-like arpeggio note on every beat
+          const arpFreq = chord[beatInBar % chord.length] * 2;
+          playChillNote(arpFreq, 1.1, 0.02, "triangle");
+
+          // Soft high breeze melody note occasionally
+          if (noteStep % 2 === 1) {
+            const mel = melodyNotes[(noteStep >> 1) % melodyNotes.length];
+            playChillNote(mel, 1.3, 0.016, "sine");
+          }
+
+          noteStep++;
+        }, 650);
+      } else {
+        btn.textContent = "🔊 เพลง: ปิด";
+        if (bgmTimer) clearInterval(bgmTimer);
+      }
+    }
+
+    /*************************************************************
+     * 4. SVG ROD GENERATOR (FOR TOP-LEFT HUD & SHOP)
+     *************************************************************/
+    function getRodSVG(rodId) {
+      const rod = RODS.find((r) => r.id === rodId) || RODS[0];
+      return `
+        <svg viewBox="0 0 64 64" class="w-12 h-12 md:w-14 md:h-14">
+          <path d="M12 52 L48 12" stroke="${rod.color}" stroke-width="5" stroke-linecap="round"/>
+          <circle cx="22" cy="42" r="5" fill="#0f172a" stroke="${rod.color}" stroke-width="3"/>
+          <path d="M48 12 L54 34" stroke="#ffffff" stroke-width="2" stroke-dasharray="3 2"/>
+          <path d="M51 34 Q54 42 47 40" fill="none" stroke="${rod.color}" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+      `;
+    }
+
+    /*************************************************************
+     * 5. UI & NAVIGATION CONTROLLERS
+     *************************************************************/
+    function renderStartScreen() {
+      const formBox = document.getElementById("auth-form-box");
+      const loggedInBox = document.getElementById("auth-logged-in-box");
+      const badge = document.getElementById("auth-status-badge");
+      const dispName = document.getElementById("display-username");
+
+      if (currentUsername) {
+        formBox.classList.add("hidden");
+        loggedInBox.classList.remove("hidden");
+        dispName.textContent = currentUsername;
+        badge.textContent = `ออนไลน์: ${currentUsername}`;
+        badge.className = "px-2.5 py-0.5 rounded-full text-xs font-bold bg-lime-400/20 text-lime-300 border border-lime-400";
+      } else {
+        formBox.classList.remove("hidden");
+        loggedInBox.classList.add("hidden");
+        badge.textContent = "ยังไม่ได้ล็อกอิน";
+        badge.className = "px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-400/20 text-amber-300 border border-amber-400";
+      }
+
+      document.getElementById("start-coins").textContent = playerState.coins.toLocaleString();
+      const eqRod = RODS.find((r) => r.id === playerState.equippedRodId) || RODS[0];
+      document.getElementById("start-rod-label").textContent = `${eqRod.name} (${eqRod.power.toFixed(1)}x)`;
+
+      // Infinite Stage Selector UI
+      if (playerState.selectedStage > playerState.unlockedStage) {
+        playerState.selectedStage = playerState.unlockedStage;
+      }
+      if (playerState.selectedStage < 1) playerState.selectedStage = 1;
+
+      const maxUnlockedLabel = document.getElementById("max-unlocked-stage-label");
+      if (maxUnlockedLabel) maxUnlockedLabel.textContent = playerState.unlockedStage.toLocaleString();
+
+      const currentStageObj = getStageConfig(playerState.selectedStage);
+      const stageContainer = document.getElementById("stage-buttons-container");
+      stageContainer.innerHTML = `
+        <div class="flex items-center gap-1.5">
+          <button
+            onclick="changeSelectedStage(-5)"
+            ${playerState.selectedStage <= 1 ? "disabled" : ""}
+            class="neon-btn px-3 py-2 rounded-xl bg-slate-900 border border-cyan-500/40 text-cyan-300 font-bold text-sm disabled:opacity-40"
+          >-5</button>
+          <button
+            onclick="changeSelectedStage(-1)"
+            ${playerState.selectedStage <= 1 ? "disabled" : ""}
+            class="neon-btn px-4 py-2 rounded-xl bg-slate-900 border border-cyan-400 text-cyan-200 font-black text-lg disabled:opacity-40"
+          >◀ ก่อนหน้า</button>
+        </div>
+
+        <div class="text-center px-3">
+          <div class="font-cyber text-2xl md:text-3xl font-black text-cyan-300">
+            ด่านที่ ${currentStageObj.stage} <span class="text-xs font-sans text-lime-400">/ ∞</span>
+          </div>
+          <div class="text-xs md:text-sm text-slate-300 font-bold">
+            ความยาก ${currentStageObj.diffMult}x · โบนัสคะแนน/ราคาปลาตามด่าน
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1.5">
+          <button
+            onclick="changeSelectedStage(1)"
+            ${playerState.selectedStage >= playerState.unlockedStage ? "disabled" : ""}
+            class="neon-btn px-4 py-2 rounded-xl bg-slate-900 border border-cyan-400 text-cyan-200 font-black text-lg disabled:opacity-40"
+          >ถัดไป ▶</button>
+          <button
+            onclick="changeSelectedStage(999999)"
+            ${playerState.selectedStage >= playerState.unlockedStage ? "disabled" : ""}
+            class="neon-btn px-3 py-2 rounded-xl bg-lime-400/20 border border-lime-400 text-lime-300 font-bold text-sm disabled:opacity-40"
+          >ด่านสูงสุด (${playerState.unlockedStage})</button>
+        </div>
+      `;
+
+      document.getElementById("stage-target-hint").textContent =
+        `${currentStageObj.name} · เป้าหมาย: ${currentStageObj.targetScore.toLocaleString()} คะแนน`;
+
+      // Leaderboard (shows highest score per recorded game with Username)
+      const lb = document.getElementById("leaderboard-list");
+      if (playerState.highScores.length === 0) {
+        lb.innerHTML = `<div class="p-6 text-center text-slate-400 text-lg">ยังไม่มีสถิติ เริ่มตกปลารอบแรกกันเลย!</div>`;
+      } else {
+        lb.innerHTML = playerState.highScores
+          .map(
+            (entry, idx) => `
+            <div class="p-3 rounded-2xl bg-slate-900/90 border ${
+              entry.name === currentUsername ? "border-lime-400" : "border-slate-700"
+            } flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <span class="w-8 h-8 rounded-full flex items-center justify-center font-black ${
+                  idx === 0 ? "bg-amber-400 text-slate-950" : idx === 1 ? "bg-slate-300 text-slate-950" : idx === 2 ? "bg-amber-700 text-white" : "bg-slate-800 text-slate-300"
+                }">${idx + 1}</span>
+                <div>
+                  <div class="text-lg md:text-xl font-bold text-white">
+                    ${entry.name} ${entry.name === currentUsername ? '<span class="text-xs text-lime-400">(คุณ)</span>' : ""}
+                  </div>
+                  <div class="text-xs md:text-sm text-slate-400">ด่าน ${entry.stage} · ${entry.rodName}</div>
+                </div>
+              </div>
+              <div class="font-cyber text-xl md:text-2xl font-black text-lime-400">${entry.score.toLocaleString()} pts</div>
+            </div>
+          `
+          )
+          .join("");
+      }
+    }
+
+    function changeSelectedStage(delta) {
+      const target = Math.max(1, Math.min(playerState.unlockedStage, playerState.selectedStage + delta));
+      playerState.selectedStage = target;
+      saveState();
+      renderStartScreen();
+    }
+
+    function requireLoginBeforeAction() {
+      if (currentUsername) return true;
+      setAuthMessage("⚠️ กรุณาเข้าสู่ระบบ หรือกด 'สมัครใหม่' ด้วย Username และรหัสผ่านก่อนเริ่มเกมครับ!", true);
+      const userEl = document.getElementById("input-username");
+      if (userEl) userEl.focus();
+      return false;
+    }
+
+    function goToStartScreen() {
+      isPlaying = false;
+      stopHandDetection();
+      document.getElementById("screen-play").classList.add("hidden");
+      document.getElementById("screen-summary").classList.add("hidden");
+      document.getElementById("screen-start").classList.remove("hidden");
+      renderStartScreen();
+    }
+
+    function openShopFromStart() {
+      if (!requireLoginBeforeAction()) return;
+      isPlaying = false;
+      stopHandDetection();
+      document.getElementById("screen-start").classList.add("hidden");
+      document.getElementById("screen-play").classList.add("hidden");
+      document.getElementById("screen-summary").classList.remove("hidden");
+
+      const stageObj = getStageConfig(playerState.selectedStage);
+      document.getElementById("summary-status-badge").textContent = "🛒 เตรียมอุปกรณ์";
+      document.getElementById("summary-status-badge").className =
+        "px-5 py-3 rounded-2xl font-black text-2xl md:text-3xl bg-cyan-400 text-slate-950";
+      document.getElementById("summary-stage-num").textContent = stageObj.stage;
+      document.getElementById("summary-score").textContent = "-";
+      document.getElementById("summary-subtext").textContent = `เป้าหมายด่านที่ ${stageObj.stage}: ${stageObj.targetScore.toLocaleString()} คะแนน`;
+      document.getElementById("btn-next-stage").textContent = `🎣 เริ่มลุยด่านที่ ${stageObj.stage}`;
+
+      renderSummaryPanels();
+      askAI("analyze");
+    }
+
+    /*************************************************************
+     * 6. 60FPS GAMEPLAY ENGINE & AI HAND TRACKING
+     *************************************************************/
+    let videoCapture = null;
+    let handPoseModel = null;
+    let isCameraReady = false;
+    let isModelReady = false;
+    let useMouseFallback = false;
+
+    let detectedHands = [];
+    let isDetecting = false;
+    let isInferencing = false;
+    let detectRAF = null;
+    let lastAITime = 0;
+    const AI_INTERVAL_MS = 65; // Single-hand fast AI inference + 60FPS smooth lerp
+
+    let aiCanvas = null;
+    let aiCtx = null;
+    let fishLabelSprites = {}; // Pre-rendered offscreen text labels for 0-lag fish drawing
+
+    let isPlaying = false;
+    let roundTimeLeft = 60;
+    let roundScore = 0;
+    let lastRoundQuitEarly = false;
+    let hudScoreDirty = false;
+    let timerInterval = null;
+
+    // Single-Player Hand Cursor
+    let playerCursors = [
+      { id: 1, label: "P1", color: "#00f3ff", x: 500, y: 400, tx: 500, ty: 400, isGrabbing: false, active: true }
+    ];
+    let cursorX = 500;
+    let cursorY = 400;
+    let targetCursorX = 500;
+    let targetCursorY = 400;
+    let isGrabbing = false;
+    let lastHandSeenTime = 0;
+    let handBannerVisible = false;
+
+    let fishes = [];
+    let floatingTexts = [];
+    let buffTimers = {
+      rareBait: 0,
+      doubleScore: 0,
+      magnet: 0,
+      freezeIce: 0,
+      goldRush: 0,
+      giantHook: 0,
+      noSlipLock: 0,
+      tripleScore: 0,
+      pentaScore: 0,
+      decaScore: 0,
+      powerBoost: 0,
+      autoReel: 0
+    };
+
+    // FPS tracking
+    let fpsFrames = 0;
+    let fpsLastStamp = performance.now();
+
+    function setup() {
+      pixelDensity(1); // Essential for 60FPS on Retina/4K screens
+      frameRate(60);
+      const cnv = createCanvas(windowWidth, windowHeight);
+      cnv.parent("canvas-container");
+      clear();
+
+      cursorX = width / 2;
+      cursorY = height / 2;
+      targetCursorX = cursorX;
+      targetCursorY = cursorY;
+
+      aiCanvas = document.getElementById("ai-offscreen-canvas");
+      aiCtx = aiCanvas.getContext("2d", { willReadFrequently: true });
+
+      loadVolumeSetting();
+      buildFishLabelSprites();
+      loadState();
+      renderStartScreen();
+      initCameraAndHandPose();
+    }
+
+    // Pre-render Thai text labels once into small canvases so draw() never stalls on font shaping
+    function buildFishLabelSprites() {
+      FISH_TYPES.forEach((ft) => {
+        const c = document.createElement("canvas");
+        c.width = 220;
+        c.height = 28;
+        const ctx = c.getContext("2d");
+        ctx.font = "bold 15px Kanit, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(`★${ft.tier} ${ft.name}`, 110, 14);
+        fishLabelSprites[ft.tier] = c;
+      });
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+    }
+
+    async function initCameraAndHandPose() {
+      const statusDot = document.getElementById("cam-status-dot");
+      const statusTitle = document.getElementById("cam-status-title");
+      const statusDesc = document.getElementById("cam-status-desc");
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 360 },
+            frameRate: { ideal: 60, max: 60 }
+          },
+          audio: false
+        });
+
+        const bgVideo = document.getElementById("bg-webcam-video");
+        bgVideo.srcObject = stream;
+        await bgVideo.play();
+        videoCapture = { elt: bgVideo };
+        isCameraReady = true;
+
+        statusDot.className = "w-5 h-5 rounded-full bg-cyan-400 shrink-0";
+        statusTitle.textContent = "กล้อง 60FPS พร้อมแล้ว! กำลังโหลดโมเดล AI จับมือ...";
+
+        if (typeof ml5 !== "undefined" && ml5.handPose) {
+          handPoseModel = await ml5.handPose({
+            flipped: true,
+            maxHands: 1,
+            runtime: "mediapipe",
+            modelType: "lite"
+          });
+          isModelReady = true;
+          statusDot.className = "w-5 h-5 rounded-full bg-lime-400 shadow-[0_0_12px_#39ff14] shrink-0";
+          statusTitle.textContent = "✅ กล้อง 60FPS & AI จับท่าทางมือพร้อมใช้งาน!";
+          statusDesc.textContent = "แบมือเพื่อเล็งเป้าเบ็ด · กำมือค้างไว้เพื่อดึงปลาขึ้นกระชัง!";
+
+          if (isPlaying && !useMouseFallback) {
+            startHandDetection();
+          }
+        } else {
+          throw new Error("ml5.handPose not loaded");
+        }
+      } catch (err) {
+        console.warn("Switching to Mouse Mode fallback:", err);
+        useMouseFallback = true;
+        const cb = document.getElementById("toggle-mouse-mode");
+        if (cb) cb.checked = true;
+        statusDot.className = "w-5 h-5 rounded-full bg-amber-400 shrink-0";
+        statusTitle.textContent = "เปิดโหมดเมาส์สำรองอัตโนมัติ (60FPS)";
+        statusDesc.textContent = "เลื่อนเมาส์เพื่อเล็ง และคลิกเมาส์ค้างไว้เพื่อดึงปลาได้ทันที";
+      }
+    }
+
+    function toggleControlMode(checked) {
+      useMouseFallback = checked;
+      const pill = document.getElementById("hud-mode-pill");
+      if (pill) {
+        pill.textContent = useMouseFallback ? "โหมดเมาส์ 60FPS" : "กล้อง AI 60FPS";
+      }
+      if (useMouseFallback) {
+        stopHandDetection();
+        setHandBanner(false);
+      } else if (isPlaying) {
+        startHandDetection();
+      }
+    }
+
+    function startHandDetection() {
+      if (isDetecting || useMouseFallback || !isModelReady || !handPoseModel || !videoCapture?.elt) return;
+      isDetecting = true;
+
+      const stepAI = (now) => {
+        if (!isDetecting || !isPlaying || useMouseFallback) return;
+
+        if (!isInferencing && now - lastAITime >= AI_INTERVAL_MS && videoCapture.elt.readyState >= 2) {
+          lastAITime = now;
+          isInferencing = true;
+
+          // Draw scaled-down 160x120 frame to offscreen canvas for ultra-fast GPU upload
+          aiCtx.drawImage(videoCapture.elt, 0, 0, 160, 120);
+
+          handPoseModel.detect(aiCanvas, (results) => {
+            detectedHands = results || [];
+            if (detectedHands.length > 0) {
+              lastHandSeenTime = performance.now();
+              processSingleHand(detectedHands[0]);
+            }
+            isInferencing = false;
+          });
+        }
+
+        detectRAF = requestAnimationFrame(stepAI);
+      };
+
+      detectRAF = requestAnimationFrame(stepAI);
+    }
+
+    function stopHandDetection() {
+      isDetecting = false;
+      isInferencing = false;
+      if (detectRAF) {
+        cancelAnimationFrame(detectRAF);
+        detectRAF = null;
+      }
+      detectedHands = [];
+    }
+
+    function extractHandGesture(hand) {
+      const kps = hand.keypoints;
+      if (!kps || kps.length < 21) return null;
+
+      const wrist = kps[0];
+      const middleMCP = kps[9];
+      const palmX = (wrist.x + middleMCP.x) * 0.5;
+      const palmY = (wrist.y + middleMCP.y) * 0.5;
+
+      const tx = constrain((palmX / 160) * width, 40, width - 40);
+      const ty = constrain((palmY / 120) * height, 40, height - 40);
+
+      const palmScale = Math.hypot(middleMCP.x - wrist.x, middleMCP.y - wrist.y) || 20;
+      const tipIndices = [8, 12, 16, 20];
+      let totalTipDist = 0;
+      for (let i = 0; i < tipIndices.length; i++) {
+        const tip = kps[tipIndices[i]];
+        totalTipDist += Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+      }
+      const avgRatio = totalTipDist / 4 / palmScale;
+      return {
+        tx,
+        ty,
+        grab: avgRatio < 1.38
+      };
+    }
+
+    function processSingleHand(hand) {
+      const parsed = extractHandGesture(hand);
+      if (!parsed) return;
+
+      playerCursors[0].active = true;
+      playerCursors[0].tx = parsed.tx;
+      playerCursors[0].ty = parsed.ty;
+      playerCursors[0].isGrabbing = parsed.grab;
+
+      targetCursorX = parsed.tx;
+      targetCursorY = parsed.ty;
+      isGrabbing = parsed.grab;
+    }
+
+    function setHandBanner(visible) {
+      if (handBannerVisible === visible) return;
+      handBannerVisible = visible;
+      const banner = document.getElementById("hand-lost-banner");
+      if (banner) {
+        if (visible) banner.classList.remove("hidden");
+        else banner.classList.add("hidden");
+      }
+    }
+
+    /*************************************************************
+     * 7. FISH SPAWNING, ITEMS & ROUND LIFECYCLE
+     *************************************************************/
+    function startGameRound() {
+      if (!requireLoginBeforeAction()) return;
+      ensureAudio();
+      document.getElementById("screen-start").classList.add("hidden");
+      document.getElementById("screen-summary").classList.add("hidden");
+      document.getElementById("screen-play").classList.remove("hidden");
+
+      isPlaying = true;
+      roundTimeLeft = 60;
+      roundScore = 0;
+      lastRoundQuitEarly = false;
+      buffTimers = {
+        rareBait: 0,
+        doubleScore: 0,
+        magnet: 0,
+        freezeIce: 0,
+        goldRush: 0,
+        giantHook: 0,
+        noSlipLock: 0,
+        tripleScore: 0,
+        pentaScore: 0,
+        decaScore: 0,
+        powerBoost: 0,
+        autoReel: 0
+      };
+      fishes = [];
+      floatingTexts = [];
+      lastHandSeenTime = performance.now();
+
+      const rod = RODS.find((r) => r.id === playerState.equippedRodId) || RODS[0];
+      const stageObj = getStageConfig(playerState.selectedStage);
+
+      document.getElementById("hud-rod-svg").innerHTML = getRodSVG(rod.id);
+      document.getElementById("hud-rod-name").textContent = rod.name;
+      document.getElementById("hud-rod-power").textContent = `${rod.power.toFixed(1)}x`;
+      document.getElementById("hud-stage-num").textContent = stageObj.stage;
+      document.getElementById("hud-target-score").textContent = stageObj.targetScore.toLocaleString();
+      document.getElementById("hud-mode-pill").textContent = useMouseFallback ? "โหมดเมาส์ 60FPS" : "กล้อง AI 60FPS";
+
+      for (let i = 0; i < 12; i++) {
+        spawnFish(true);
+      }
+
+      updateGameplayHUD(true);
+
+      if (!useMouseFallback && isModelReady) {
+        startHandDetection();
+      }
+
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        if (!isPlaying) return;
+        roundTimeLeft--;
+        Object.keys(buffTimers).forEach((k) => {
+          if (buffTimers[k] > 0) buffTimers[k]--;
+        });
+
+        while (fishes.length < 12) {
+          spawnFish(false);
+        }
+
+        updateGameplayHUD(false);
+
+        if (roundTimeLeft <= 0) {
+          finishRound(false);
+        }
+      }, 1000);
+    }
+
+    function spawnFish(randomX = false, forcedTier = null) {
+      const stageObj = getStageConfig(playerState.selectedStage);
+      let chosenIdx = 0;
+
+      if (forcedTier !== null) {
+        chosenIdx = Math.max(0, Math.min(FISH_TYPES.length - 1, forcedTier - 1));
+      } else {
+        let weights = [...stageObj.weights];
+        // Rare Bait boosts high-tier rare & boss fish (tiers 10-20)
+        if (buffTimers.rareBait > 0) {
+          weights = FISH_TYPES.map((ft) => (ft.tier >= 10 ? 28 : 2));
+        }
+        const totalW = weights.reduce((a, b) => a + b, 0);
+        let roll = Math.random() * totalW;
+        for (let i = 0; i < weights.length; i++) {
+          roll -= weights[i];
+          if (roll <= 0) {
+            chosenIdx = i;
+            break;
+          }
+        }
+      }
+
+      const spec = FISH_TYPES[chosenIdx];
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      const startX = randomX ? random(80, width - 80) : dir === 1 ? -70 : width + 70;
+      const startY = random(130, height - 165);
+      // Higher stages have slightly faster fish
+      const stageSpeedScale = Math.min(2.1, 1 + (stageObj.stage - 1) * 0.035);
+
+      fishes.push({
+        spec,
+        x: startX,
+        y: startY,
+        vx: dir * spec.speed * stageSpeedScale * random(0.85, 1.18),
+        vy: random(-0.45, 0.45),
+        dir,
+        progress: 0,
+        wobble: random(0, TWO_PI)
+      });
+    }
+
+    function captureFishInstantly(fish) {
+      const stageObj = getStageConfig(playerState.selectedStage);
+      const scoreMult =
+        (buffTimers.doubleScore > 0 ? 2 : 1) *
+        (buffTimers.tripleScore > 0 ? 3 : 1) *
+        (buffTimers.pentaScore > 0 ? 5 : 1) *
+        (buffTimers.decaScore > 0 ? 10 : 1);
+      const stageScoreMult = 1 + (stageObj.stage - 1) * 0.25;
+      const pts = Math.round(fish.spec.points * stageScoreMult * scoreMult);
+      const bagAdd = buffTimers.goldRush > 0 ? 2 : 1;
+
+      roundScore += pts;
+      playerState.fishBag[fish.spec.tier] = (playerState.fishBag[fish.spec.tier] || 0) + bagAdd;
+      hudScoreDirty = true;
+
+      if (floatingTexts.length < 10) {
+        floatingTexts.push({
+          x: fish.x,
+          y: fish.y - 20,
+          text: `+${pts.toLocaleString()} pts`,
+          color: fish.spec.color,
+          life: 1.0
+        });
+      }
+    }
+
+    function useItemInGame(itemKey) {
+      if (!isPlaying) return;
+      if ((playerState.items[itemKey] || 0) <= 0) return;
+
+      const itemObj = ITEMS.find((it) => it.key === itemKey);
+      if (!itemObj) return;
+
+      playerState.items[itemKey]--;
+      playTone(580, 0.16, "sine", 0.14);
+
+      const eff = itemObj.effectType;
+      const val = itemObj.val || 15;
+
+      if (eff === "rareBait") {
+        buffTimers.rareBait += val;
+        spawnFish(false, 15);
+        spawnFish(false, 19);
+      } else if (eff === "addTime") {
+        roundTimeLeft += val;
+      } else if (eff === "doubleScore") {
+        buffTimers.doubleScore += val;
+      } else if (eff === "tripleScore") {
+        buffTimers.tripleScore += val;
+      } else if (eff === "pentaScore") {
+        buffTimers.pentaScore += val;
+      } else if (eff === "decaScore") {
+        buffTimers.decaScore += val;
+      } else if (eff === "magnet") {
+        buffTimers.magnet += val;
+      } else if (eff === "freezeIce") {
+        buffTimers.freezeIce += val;
+      } else if (eff === "shockProgress") {
+        fishes.forEach((f) => {
+          f.progress = Math.max(f.progress, val);
+        });
+      } else if (eff === "goldRush") {
+        buffTimers.goldRush += val;
+      } else if (eff === "giantHook") {
+        buffTimers.giantHook += val;
+      } else if (eff === "spawnSwarm") {
+        for (let i = 0; i < val; i++) spawnFish(true);
+      } else if (eff === "noSlipLock") {
+        buffTimers.noSlipLock += val;
+      } else if (eff === "spawnBoss") {
+        for (let i = 0; i < val; i++) spawnFish(true, 19);
+      } else if (eff === "spawnShark") {
+        for (let i = 0; i < val; i++) spawnFish(true, 13);
+      } else if (eff === "powerBoost") {
+        buffTimers.powerBoost += val;
+      } else if (eff === "autoReel") {
+        buffTimers.autoReel += val;
+      } else if (eff === "comboMagnetIce") {
+        buffTimers.magnet += val;
+        buffTimers.freezeIce += val;
+      } else if (eff === "instantGold") {
+        playerState.coins += val;
+      } else if (eff === "allBuffs") {
+        buffTimers.rareBait += val;
+        buffTimers.doubleScore += val;
+        buffTimers.tripleScore += val;
+        buffTimers.magnet += val;
+        buffTimers.freezeIce += val;
+        buffTimers.goldRush += val;
+        buffTimers.giantHook += val;
+        buffTimers.noSlipLock += val;
+        buffTimers.powerBoost += val;
+      } else if (eff === "catchNearest") {
+        const sorted = [...fishes].sort(
+          (a, b) => dist(cursorX, cursorY, a.x, a.y) - dist(cursorX, cursorY, b.x, b.y)
+        );
+        const targets = sorted.slice(0, val);
+        targets.forEach((t) => {
+          captureFishInstantly(t);
+          const idx = fishes.indexOf(t);
+          if (idx !== -1) fishes.splice(idx, 1);
+          spawnFish(false);
+        });
+        playCatchSFX(5);
+      } else if (eff === "empAll") {
+        const allCurrent = [...fishes];
+        fishes = [];
+        allCurrent.forEach((f) => captureFishInstantly(f));
+        for (let i = 0; i < 12; i++) spawnFish(false);
+        playCatchSFX(5);
+      } else if (eff === "empAndBoss") {
+        const allCurrent = [...fishes];
+        fishes = [];
+        allCurrent.forEach((f) => captureFishInstantly(f));
+        for (let i = 0; i < val; i++) spawnFish(true, 19);
+        for (let i = 0; i < 8; i++) spawnFish(false);
+        playCatchSFX(19);
+      } else if (eff === "ultimate100") {
+        const allCurrent = [...fishes];
+        fishes = [];
+        allCurrent.forEach((f) => captureFishInstantly(f));
+        roundTimeLeft += 60;
+        buffTimers.decaScore += 45;
+        buffTimers.autoReel += 45;
+        buffTimers.goldRush += 45;
+        buffTimers.giantHook += 45;
+        buffTimers.noSlipLock += 45;
+        for (let i = 0; i < 12; i++) spawnFish(true, 20);
+        playCatchSFX(20);
+      }
+
+      floatingTexts.push({
+        x: cursorX,
+        y: cursorY - 35,
+        text: `${itemObj.icon} ${itemObj.name}`,
+        color: "#39ff14",
+        life: 1.15
+      });
+
+      updateGameplayHUD(true);
+    }
+
+    function toggleHudItemFilter(onlyOwned) {
+      showOnlyOwnedHudItems = onlyOwned;
+      const bOwned = document.getElementById("btn-filter-owned");
+      const bAll = document.getElementById("btn-filter-all");
+      if (bOwned && bAll) {
+        bOwned.className = onlyOwned
+          ? "px-2.5 py-0.5 rounded-full bg-cyan-400 text-slate-950 font-black"
+          : "px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 font-bold";
+        bAll.className = !onlyOwned
+          ? "px-2.5 py-0.5 rounded-full bg-cyan-400 text-slate-950 font-black"
+          : "px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 font-bold";
+      }
+      updateGameplayHUD(true);
+    }
+
+    window.addEventListener("keydown", (e) => {
+      if (!isPlaying) return;
+      const k = e.key.toUpperCase();
+      const found = ITEMS.find((it) => it.num === k);
+      if (found) useItemInGame(found.key);
+    });
+
+    function updateGameplayHUD(rebuildItemButtons = false) {
+      document.getElementById("hud-timer").textContent = `${roundTimeLeft}s`;
+      document.getElementById("hud-score").textContent = roundScore.toLocaleString();
+
+      // Active buffs badges
+      const buffsRow = document.getElementById("active-buffs-row");
+      const activeBadges = [];
+      if (buffTimers.rareBait > 0) activeBadges.push(`<span class="px-2.5 py-0.5 rounded-full bg-lime-400 text-slate-950 font-black text-xs md:text-sm">🪱 เหยื่อแรร์ (${buffTimers.rareBait}s)</span>`);
+      if (buffTimers.doubleScore > 0) activeBadges.push(`<span class="px-2.5 py-0.5 rounded-full bg-amber-300 text-slate-950 font-black text-xs md:text-sm">✨ X2 (${buffTimers.doubleScore}s)</span>`);
+      if (buffTimers.tripleScore > 0) activeBadges.push(`<span class="px-2.5 py-0.5 rounded-full bg-rose-500 text-white font-black text-xs md:text-sm">🔥 X3 (${buffTimers.tripleScore}s)</span>`);
+      if (buffTimers.pentaScore > 0) activeBadges.push(`<span class="px-2.5 py-0.5 rounded-full bg-fuchsia-500 text-white font-black text-xs md:text-sm">🌟 X5 (${buffTimers.pentaScore}s)</span>`);
+      if (buffTimers.decaScore > 0) activeBadges.push(`<span class="px-2.5 py-0.5 rounded-full bg-yellow-300 text-slate-950 font-black text-xs md:text-sm">👑 X10 (${buffTimers.decaScore}s)</span>`);
+      if (buffTimers.magnet > 0) activeBadges.push(`<span class="px-2.5 py-0.5 rounded-full bg-pink-400 text-slate-950 font-black text-xs md:text-sm">🧲 แม่เหล็ก (${buffTimers.magnet}s)</span>`);
+      if (buffTimers.freezeIce > 0) activeBadges.push(`<span class="px-2.5 py-0.5 rounded-full bg-cyan-300 text-slate-950 font-black text-xs md:text-sm">❄️ แช่แข็ง (${buffTimers.freezeIce}s)</span>`);
+      if (buffTimers.goldRush > 0) activeBadges.push(`<span class="px-2.5 py-0.5 rounded-full bg-yellow-400 text-slate-950 font-black text-xs md:text-sm">💰 ปลาX2 (${buffTimers.goldRush}s)</span>`);
+      if (buffTimers.giantHook > 0) activeBadges.push(`<span class="px-2.5 py-0.5 rounded-full bg-purple-400 text-slate-950 font-black text-xs md:text-sm">🎯 วงเบ็ดยักษ์ (${buffTimers.giantHook}s)</span>`);
+      if (buffTimers.noSlipLock > 0) activeBadges.push(`<span class="px-2.5 py-0.5 rounded-full bg-emerald-400 text-slate-950 font-black text-xs md:text-sm">🔒 ล็อกสาย (${buffTimers.noSlipLock}s)</span>`);
+      if (buffTimers.powerBoost > 0) activeBadges.push(`<span class="px-2.5 py-0.5 rounded-full bg-orange-400 text-slate-950 font-black text-xs md:text-sm">💪 พลังดึงX2 (${buffTimers.powerBoost}s)</span>`);
+      if (buffTimers.autoReel > 0) activeBadges.push(`<span class="px-2.5 py-0.5 rounded-full bg-teal-300 text-slate-950 font-black text-xs md:text-sm">🤖 ดึงออโต้ (${buffTimers.autoReel}s)</span>`);
+      buffsRow.innerHTML = activeBadges.join("");
+
+      if (!rebuildItemButtons) return;
+
+      // Items buttons bar (only rebuilt when an item is used or filter toggled, NEVER every frame!)
+      const bar = document.getElementById("hud-items-bar");
+      const filteredItems = showOnlyOwnedHudItems
+        ? ITEMS.filter((it) => (playerState.items[it.key] || 0) > 0)
+        : ITEMS;
+
+      if (filteredItems.length === 0) {
+        bar.innerHTML = `<div class="text-slate-400 text-xs md:text-sm px-4 py-1">ยังไม่มีไอเทมในกระเป๋า (ซื้อเพิ่มในร้านค้า หรือกดปุ่ม "แสดงทั้ง 25 ชนิด" ด้านบน)</div>`;
+      } else {
+        bar.innerHTML = filteredItems.map((it) => {
+          const count = playerState.items[it.key] || 0;
+          return `
+            <button
+              onclick="useItemInGame('${it.key}')"
+              ${count <= 0 ? "disabled" : ""}
+              class="neon-btn px-2.5 py-1.5 rounded-xl border flex items-center gap-1.5 text-xs md:text-sm font-bold ${
+                count > 0
+                  ? "bg-slate-900 border-cyan-400 text-white"
+                  : "bg-slate-950/60 border-slate-800 text-slate-600 cursor-not-allowed"
+              }"
+            >
+              <span class="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 text-[10px] font-cyber">[${it.num}]</span>
+              <span>${it.icon} ${it.name}</span>
+              <span class="px-1.5 py-0.5 rounded-full bg-cyan-400/20 text-cyan-300 font-cyber text-xs">x${count}</span>
+            </button>
+          `;
+        }).join("");
+      }
+    }
+
+    /*************************************************************
+     * 8. ULTRA-FAST 60FPS P5.JS DRAW LOOP (2-PLAYER CO-OP SUPPORT)
+     *************************************************************/
+    function draw() {
+      // Update FPS Counter every 500ms
+      fpsFrames++;
+      const now = performance.now();
+      if (now - fpsLastStamp >= 500) {
+        const fps = Math.min(60, Math.round((fpsFrames * 1000) / (now - fpsLastStamp)));
+        const fpsEl = document.getElementById("fps-counter");
+        if (fpsEl) fpsEl.textContent = `${fps} FPS`;
+        fpsFrames = 0;
+        fpsLastStamp = now;
+      }
+
+      clear();
+      if (!isPlaying) return;
+
+      const dt = Math.min(deltaTime / 16.667, 2.2);
+      const rod = RODS.find((r) => r.id === playerState.equippedRodId) || RODS[0];
+      const stageObj = getStageConfig(playerState.selectedStage);
+
+      // Determine control position (Mouse or Single-Player AI Hand)
+      const handRecentlySeen = !useMouseFallback && now - lastHandSeenTime < 1400;
+      if (useMouseFallback || !handRecentlySeen) {
+        playerCursors[0].active = true;
+        playerCursors[0].tx = mouseX;
+        playerCursors[0].ty = mouseY;
+        playerCursors[0].isGrabbing = mouseIsPressed;
+      }
+
+      setHandBanner(!useMouseFallback && !handRecentlySeen);
+
+      // Smooth 60FPS interpolation for player cursor
+      const pc = playerCursors[0];
+      pc.x = lerp(pc.x, pc.tx, 0.38);
+      pc.y = lerp(pc.y, pc.ty, 0.38);
+
+      cursorX = pc.x;
+      cursorY = pc.y;
+      isGrabbing = pc.isGrabbing;
+
+      const catchRadius =
+        rod.radius +
+        (buffTimers.magnet > 0 ? 45 : 0) +
+        (buffTimers.giantHook > 0 ? 75 : 0);
+
+      const freezeFactor = buffTimers.freezeIce > 0 ? 0.28 : 1.0;
+
+      let hookedFish = null;
+
+      for (let i = fishes.length - 1; i >= 0; i--) {
+        const f = fishes[i];
+        f.wobble += 0.12 * dt * freezeFactor;
+        f.x += f.vx * dt * freezeFactor;
+        f.y += (f.vy + Math.sin(f.wobble) * 0.45) * dt * freezeFactor;
+
+        // Bounce top/bottom
+        if (f.y < 110) f.y = 110;
+        if (f.y > height - 155) f.y = height - 155;
+
+        // Wrap around left/right
+        if (f.vx > 0 && f.x > width + 90) f.x = -70;
+        if (f.vx < 0 && f.x < -90) f.x = width + 70;
+
+        const distToHook = dist(pc.x, pc.y, f.x, f.y);
+        if (buffTimers.magnet > 0 && distToHook < catchRadius * 1.65) {
+          f.x = lerp(f.x, pc.x, 0.07 * dt);
+          f.y = lerp(f.y, pc.y, 0.07 * dt);
+        }
+
+        if (pc.isGrabbing && distToHook <= catchRadius) {
+          if (!hookedFish || f.spec.tier >= hookedFish.spec.tier) {
+            hookedFish = f;
+          }
+        }
+
+        // Auto-reel drone buff pulls all fish automatically
+        let beingPulled = false;
+        if (buffTimers.autoReel > 0) {
+          const autoRate = (rod.power * 1.15) / (f.spec.difficulty * stageObj.diffMult);
+          f.progress += autoRate * dt;
+          beingPulled = true;
+        }
+
+        if (!beingPulled && hookedFish !== f && buffTimers.noSlipLock <= 0) {
+          f.progress = Math.max(0, f.progress - 0.65 * dt);
+        }
+
+        drawSingleFish(f);
+      }
+
+      // Process active reeling for single player
+      const powerMult = (buffTimers.magnet > 0 ? 1.5 : 1.0) * (buffTimers.powerBoost > 0 ? 2.0 : 1.0);
+      if (hookedFish) {
+        const pullRate = (rod.power * powerMult * 1.95) / (hookedFish.spec.difficulty * stageObj.diffMult);
+        hookedFish.progress += pullRate * dt;
+
+        hookedFish.x = lerp(hookedFish.x, pc.x, 0.12 * dt);
+        hookedFish.y = lerp(hookedFish.y, pc.y, 0.12 * dt);
+
+        stroke(rod.color);
+        strokeWeight(3.5);
+        line(90, 90, pc.x, pc.y);
+      }
+
+      // Check any fish that reached 100% progress
+      for (let i = fishes.length - 1; i >= 0; i--) {
+        if (fishes[i].progress >= 100) {
+          const caught = fishes[i];
+          captureFishInstantly(caught);
+          playCatchSFX(caught.spec.tier);
+          fishes.splice(i, 1);
+          spawnFish(false);
+        }
+      }
+
+      if (hudScoreDirty) {
+        hudScoreDirty = false;
+        document.getElementById("hud-score").textContent = roundScore.toLocaleString();
+      }
+
+      // Draw floating catch texts
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(24);
+      for (let i = floatingTexts.length - 1; i >= 0; i--) {
+        const ft = floatingTexts[i];
+        fill(ft.color);
+        text(ft.text, ft.x, ft.y);
+        ft.y -= 1.8 * dt;
+        ft.life -= 0.025 * dt;
+        if (ft.life <= 0) floatingTexts.splice(i, 1);
+      }
+
+      // Draw Reticle
+      drawPlayerReticle(pc, rod.color, catchRadius);
+    }
+
+    function drawSingleFish(f) {
+      push();
+      translate(f.x, f.y);
+      scale(f.dir, 1);
+
+      const sz = f.spec.size;
+      noStroke();
+
+      // Outer vibrant neon aura (fast alpha circle instead of heavy shadowBlur)
+      fill(f.spec.color + "33");
+      ellipse(0, 0, sz * 1.45, sz * 0.95);
+
+      // Tail fin
+      fill(f.spec.color);
+      const tailSwing = Math.sin(f.wobble * 2) * 6;
+      triangle(-sz * 0.45, 0, -sz * 0.78, -sz * 0.32 + tailSwing, -sz * 0.78, sz * 0.32 + tailSwing);
+
+      // Body
+      ellipse(0, 0, sz, sz * 0.58);
+
+      // Cyber stripe
+      fill("#050814");
+      ellipse(sz * 0.22, -sz * 0.08, sz * 0.14, sz * 0.14);
+      fill("#ffffff");
+      ellipse(sz * 0.24, -sz * 0.09, sz * 0.06, sz * 0.06);
+
+      pop();
+
+      // Blit pre-rendered fish name sprite (10x faster than fillText() every frame)
+      const labelCanvas = fishLabelSprites[f.spec.tier];
+      if (labelCanvas) {
+        drawingContext.drawImage(labelCanvas, f.x - 110, f.y - f.spec.size * 0.42 - 24);
+      }
+
+      if (f.progress > 0) {
+        const barW = 76;
+        const barH = 10;
+        const bx = f.x - barW / 2;
+        const by = f.y + f.spec.size * 0.38;
+        fill("#090d1e");
+        stroke("#00f3ff");
+        strokeWeight(1.5);
+        rect(bx, by, barW, barH, 5);
+        noStroke();
+        fill("#39ff14");
+        rect(bx, by, (barW * constrain(f.progress, 0, 100)) / 100, barH, 5);
+      }
+    }
+
+    function drawPlayerReticle(pc, baseColor, catchRadius) {
+      push();
+      translate(pc.x, pc.y);
+
+      noFill();
+      stroke(pc.isGrabbing ? "#39ff14" : baseColor);
+      strokeWeight(pc.isGrabbing ? 4.5 : 2.5);
+      ellipse(0, 0, catchRadius * 2, catchRadius * 2);
+
+      // Inner crosshair
+      line(-14, 0, 14, 0);
+      line(0, -14, 0, 14);
+
+      noStroke();
+      fill(pc.isGrabbing ? "#39ff14" : "#ffffff");
+      textAlign(CENTER, TOP);
+      textSize(18);
+      text(pc.isGrabbing ? `✊ กำลังดึงปลา!` : `🖐️ แบมือเล็ง`, 0, catchRadius + 8);
+      pop();
+    }
+
+    /*************************************************************
+     * 9. END OF ROUND, SELL FISH, SHOP & SMART AI ADVISOR
+     *************************************************************/
+    function finishRound(quitEarly = false) {
+      isPlaying = false;
+      if (timerInterval) clearInterval(timerInterval);
+      stopHandDetection();
+
+      lastRoundQuitEarly = Boolean(quitEarly && roundTimeLeft > 0);
+
+      document.getElementById("screen-play").classList.add("hidden");
+      document.getElementById("screen-summary").classList.remove("hidden");
+
+      const currentStageObj = getStageConfig(playerState.selectedStage);
+      const scoreReached = roundScore >= currentStageObj.targetScore;
+      // Player ONLY passes the stage if score reaches target AND they did NOT quit before time ran out
+      const passed = scoreReached && !lastRoundQuitEarly;
+
+      // Infinite stage unlock progression (Only unlocks when full time finishes & target reached)
+      if (passed && playerState.selectedStage >= playerState.unlockedStage) {
+        playerState.unlockedStage = playerState.selectedStage + 1;
+      }
+
+      const eqRod = RODS.find((r) => r.id === playerState.equippedRodId) || RODS[0];
+      if (roundScore > 0) {
+        playerState.highScores.push({
+          name: playerState.name,
+          score: roundScore,
+          stage: currentStageObj.stage,
+          rodName: eqRod.name
+        });
+        playerState.highScores.sort((a, b) => b.score - a.score);
+        playerState.highScores = playerState.highScores.slice(0, 10);
+      }
+      saveState();
+
+      const badge = document.getElementById("summary-status-badge");
+      if (passed) {
+        badge.textContent = "🎉 ผ่านด่านสำเร็จ!";
+        badge.className = "px-5 py-3 rounded-2xl font-black text-2xl md:text-3xl bg-lime-400 text-slate-950";
+      } else if (lastRoundQuitEarly && scoreReached) {
+        badge.textContent = "⚠️ ออกก่อนเวลาหมด (ไม่ผ่านด่าน!)";
+        badge.className = "px-5 py-3 rounded-2xl font-black text-xl md:text-2xl bg-amber-400 text-slate-950";
+      } else if (lastRoundQuitEarly) {
+        badge.textContent = "🚪 ออกก่อนเวลาหมด";
+        badge.className = "px-5 py-3 rounded-2xl font-black text-2xl md:text-3xl bg-rose-500 text-white";
+      } else {
+        badge.textContent = "💥 คะแนนยังไม่ถึงเป้า";
+        badge.className = "px-5 py-3 rounded-2xl font-black text-2xl md:text-3xl bg-pink-500 text-white";
+      }
+
+      document.getElementById("summary-stage-num").textContent = currentStageObj.stage;
+      document.getElementById("summary-score").textContent = roundScore.toLocaleString();
+      const best = playerState.highScores.length > 0 ? playerState.highScores[0].score : roundScore;
+      if (lastRoundQuitEarly && scoreReached) {
+        document.getElementById("summary-subtext").textContent =
+          `คะแนนถึงเป้า (${currentStageObj.targetScore.toLocaleString()}) แล้ว แต่คุณกดออกก่อนเวลาหมด จึงไม่สามารถไปด่านต่อไปได้! ต้องเล่นจนเวลาเหลือ 0s เท่านั้น`;
+      } else {
+        document.getElementById("summary-subtext").textContent =
+          `เป้าหมายด่านนี้: ${currentStageObj.targetScore.toLocaleString()} คะแนน · สถิติสูงสุดในเครื่อง: ${best.toLocaleString()}`;
+      }
+
+      const nextBtn = document.getElementById("btn-next-stage");
+      if (passed) {
+        nextBtn.textContent = `▶️ ลุยด่านที่ ${playerState.selectedStage + 1} ต่อเลย!`;
+      } else {
+        nextBtn.textContent = `🔄 เล่นด่านที่ ${playerState.selectedStage} อีกครั้ง (ต้องอยู่จนหมดเวลา)`;
+      }
+
+      renderSummaryPanels();
+      askAI("analyze");
+    }
+
+    function getTotalFishBagGold() {
+      let total = 0;
+      FISH_TYPES.forEach((ft) => {
+        const count = playerState.fishBag[ft.tier] || 0;
+        total += count * ft.gold;
+      });
+      return total;
+    }
+
+    function getTotalFishBagCount() {
+      let count = 0;
+      FISH_TYPES.forEach((ft) => {
+        count += playerState.fishBag[ft.tier] || 0;
+      });
+      return count;
+    }
+
+    function showSynthesisFeedback(message, isSuccess = true) {
+      const banner = document.getElementById("synthesis-Result-banner");
+      if (!banner) return;
+      banner.classList.remove("hidden");
+      banner.textContent = message;
+      banner.className = `mt-4 p-3.5 rounded-2xl border-2 text-center font-black text-base md:text-xl transition-all ${
+        isSuccess
+          ? "bg-lime-400/20 border-lime-400 text-lime-300 shadow-[0_0_20px_rgba(57,255,20,0.3)]"
+          : "bg-rose-500/20 border-rose-400 text-rose-300 shadow-[0_0_20px_rgba(244,63,94,0.3)]"
+      }`;
+    }
+
+    // 1) HARDCORE Fish Fusion Requirement: High fish count + Gold Catalyst Fee + Success Chance % (with Pity Bonus)
+    function getFishFusionRequirement(fromTier) {
+      const fromFish = FISH_TYPES[fromTier - 1];
+      // Requires 18 fish at Tier 1, scaling up to 92 fish at Tier 19
+      const reqCount = Math.round(18 + fromTier * 2.8 + Math.pow(fromTier, 1.38));
+      // Requires Gold catalyst fee to run the fusion reactor
+      const goldFee = Math.round(fromFish.gold * reqCount * 0.35);
+      // Base success rate drops from 85% (Tier 1->2) down to 25% (Tier 19->20)
+      const baseChance = Math.max(25, Math.round(88 - fromTier * 3.3));
+      const pityBonus = ((playerState.fusionPity && playerState.fusionPity[fromTier]) || 0) * 15;
+      const finalChance = Math.min(100, baseChance + pityBonus);
+
+      return { reqCount, goldFee, baseChance, pityBonus, finalChance };
+    }
+
+    // 2) HARDCORE Fish Requirements to Trade for Rods (Requires 2 Fish Species + High Quantities + % Success Rate by Rod Power)
+    function getRodFishTradeCost(rodId) {
+      if (rodId <= 1) {
+        return { reqTier1: 1, reqCount1: 0, reqTier2: 1, reqCount2: 0, baseChance: 100, pityBonus: 0, finalChance: 100 };
+      }
+      const reqTier1 = Math.max(1, Math.min(20, rodId - 1));
+      const reqCount1 = Math.round(25 + rodId * 5.5 + Math.pow(rodId, 1.35));
+
+      const reqTier2 = Math.max(1, reqTier1 - 1);
+      const reqCount2 = rodId === 2 ? 15 : Math.round(18 + rodId * 3.8);
+
+      // Base success rate scales down by rod tier: Rod 2 = 80%, Rod 10 = 51%, Rod 20 = 15%
+      const baseChance = Math.max(15, Math.round(84 - (rodId - 1) * 3.6));
+      const pityBonus = ((playerState.rodCraftPity && playerState.rodCraftPity[rodId]) || 0) * 12;
+      const finalChance = Math.min(100, baseChance + pityBonus);
+
+      return { reqTier1, reqCount1, reqTier2, reqCount2, baseChance, pityBonus, finalChance };
+    }
+
+    // 3) HARDCORE Fish Requirements to Trade for Items (Scales Steeply by Item Power)
+    function getItemFishTradeCost(itemIdx) {
+      // itemIdx is 0..24
+      const reqTier1 = Math.max(1, Math.min(20, Math.ceil(((itemIdx + 1) / ITEMS.length) * 20)));
+      // Basic items need 14+ fish; God-tier items (+60s & Omniverse) need 140+ high-tier fish
+      const reqCount1 = Math.round(14 + itemIdx * 3.5 + Math.pow(itemIdx, 1.38));
+
+      // Items from #6 onwards also require a secondary lower-tier fish sacrifice
+      const hasSecond = itemIdx >= 5;
+      const reqTier2 = hasSecond ? Math.max(1, reqTier1 - 2) : 0;
+      const reqCount2 = hasSecond ? Math.round(12 + itemIdx * 2.4) : 0;
+
+      return { reqTier1, reqCount1, hasSecond, reqTier2, reqCount2 };
+    }
+
+    // Action: Hardcore Fuse Low-Tier Fish -> Next Higher-Tier Fish
+    function fuseFishTier(fromTier) {
+      ensureAudio();
+      const targetTier = fromTier + 1;
+      if (fromTier < 1 || targetTier > 20) return;
+
+      const { reqCount, goldFee, finalChance } = getFishFusionRequirement(fromTier);
+      const currentOwned = playerState.fishBag[fromTier] || 0;
+      if (currentOwned < reqCount || playerState.coins < goldFee) return;
+
+      const fromFish = FISH_TYPES[fromTier - 1];
+      const toFish = FISH_TYPES[targetTier - 1];
+
+      // Deduct Gold Catalyst Fee
+      playerState.coins -= goldFee;
+      if (!playerState.fusionPity) playerState.fusionPity = {};
+
+      const roll = Math.random() * 100;
+      if (roll <= finalChance) {
+        // SUCCESS: Consume all required fish, gain +1 higher tier fish, reset pity
+        playerState.fishBag[fromTier] = currentOwned - reqCount;
+        playerState.fishBag[targetTier] = (playerState.fishBag[targetTier] || 0) + 1;
+        playerState.fusionPity[fromTier] = 0;
+
+        playTone(740, 0.25, "sine", 0.18);
+        showSynthesisFeedback(
+          `✨ หลอมสำเร็จ! (โอกาส ${finalChance}%) ได้รับ ★${toFish.tier} ${toFish.name} x1 ตัว!`,
+          true
+        );
+      } else {
+        // FAIL: Lose 50% of required fish, gain +15% Pity Bonus for next attempt
+        const lostFish = Math.max(1, Math.floor(reqCount * 0.5));
+        playerState.fishBag[fromTier] = currentOwned - lostFish;
+        playerState.fusionPity[fromTier] = (playerState.fusionPity[fromTier] || 0) + 1;
+        const nextBonus = playerState.fusionPity[fromTier] * 15;
+
+        playTone(190, 0.3, "sawtooth", 0.16);
+        showSynthesisFeedback(
+          `💥 การหลอมล้มเหลว! (โอกาส ${finalChance}%) เสีย ★${fromFish.tier} ${fromFish.name} ไป ${lostFish} ตัว · ได้รับโบนัสการันตีครั้งหน้า +${nextBonus}%!`,
+          false
+        );
+      }
+
+      saveState();
+      renderSummaryPanels();
+    }
+
+    // Action: Trade Collected Fish for a Rod (Requires 2 species + % Crafting Chance)
+    function tradeFishForRod(rodId) {
+      ensureAudio();
+      const rod = RODS.find((r) => r.id === rodId);
+      if (!rod || playerState.ownedRods.includes(rodId)) return;
+
+      const { reqTier1, reqCount1, reqTier2, reqCount2, finalChance } = getRodFishTradeCost(rodId);
+      const owned1 = playerState.fishBag[reqTier1] || 0;
+      const owned2 = playerState.fishBag[reqTier2] || 0;
+
+      if (reqTier1 === reqTier2) {
+        if (owned1 < reqCount1 + reqCount2) return;
+      } else {
+        if (owned1 < reqCount1 || owned2 < reqCount2) return;
+      }
+
+      if (!playerState.rodCraftPity) playerState.rodCraftPity = {};
+      const roll = Math.random() * 100;
+
+      if (roll <= finalChance) {
+        // SUCCESS: Deduct 100% of required fish and unlock the rod
+        if (reqTier1 === reqTier2) {
+          playerState.fishBag[reqTier1] = owned1 - (reqCount1 + reqCount2);
+        } else {
+          playerState.fishBag[reqTier1] = owned1 - reqCount1;
+          playerState.fishBag[reqTier2] = owned2 - reqCount2;
+        }
+
+        playerState.rodCraftPity[rodId] = 0;
+        playerState.ownedRods.push(rodId);
+        playerState.equippedRodId = rodId;
+
+        playTone(760, 0.3, "sine", 0.2);
+        showSynthesisFeedback(
+          `🏆 สร้างเบ็ดสำเร็จ! (โอกาส ${finalChance}%) คุณได้รับ "${rod.name}" พร้อมติดตั้งใช้งานทันที!`,
+          true
+        );
+      } else {
+        // FAIL: Lose 50% of required fish, gain +12% Pity Bonus for this rod
+        if (reqTier1 === reqTier2) {
+          const lostTotal = Math.max(1, Math.floor((reqCount1 + reqCount2) * 0.5));
+          playerState.fishBag[reqTier1] = owned1 - lostTotal;
+        } else {
+          const lost1 = Math.max(1, Math.floor(reqCount1 * 0.5));
+          const lost2 = Math.max(1, Math.floor(reqCount2 * 0.5));
+          playerState.fishBag[reqTier1] = owned1 - lost1;
+          playerState.fishBag[reqTier2] = owned2 - lost2;
+        }
+
+        playerState.rodCraftPity[rodId] = (playerState.rodCraftPity[rodId] || 0) + 1;
+        const nextBonus = playerState.rodCraftPity[rodId] * 12;
+
+        playTone(185, 0.32, "sawtooth", 0.18);
+        showSynthesisFeedback(
+          `💥 สร้าง "${rod.name}" ล้มเหลว! (โอกาส ${finalChance}%) สูญเสียปลาวัตถุดิบ 50% · ได้รับโบนัสการันตีเบ็ดคันนี้ +${nextBonus}% ในครั้งถัดไป!`,
+          false
+        );
+      }
+
+      saveState();
+      renderSummaryPanels();
+    }
+
+    // Action: Trade Collected Fish for an Item
+    function tradeFishForItem(itemIdx) {
+      ensureAudio();
+      const item = ITEMS[itemIdx];
+      if (!item) return;
+
+      const { reqTier1, reqCount1, hasSecond, reqTier2, reqCount2 } = getItemFishTradeCost(itemIdx);
+      const owned1 = playerState.fishBag[reqTier1] || 0;
+      const owned2 = hasSecond ? playerState.fishBag[reqTier2] || 0 : 0;
+
+      if (owned1 < reqCount1 || (hasSecond && owned2 < reqCount2)) return;
+
+      playerState.fishBag[reqTier1] = owned1 - reqCount1;
+      if (hasSecond) {
+        playerState.fishBag[reqTier2] = owned2 - reqCount2;
+      }
+      playerState.items[item.key] = (playerState.items[item.key] || 0) + 1;
+
+      playTone(680, 0.22, "triangle", 0.18);
+      showSynthesisFeedback(`⚡ แลกไอเทมสำเร็จ! ได้รับ "${item.icon} ${item.name}" x1 ชิ้นเข้ากระเป๋า!`, true);
+      saveState();
+      renderSummaryPanels();
+    }
+
+    // Sell Fish Functions (1 by 1, All of a single tier, or All in bag)
+    function sellSingleFish(tier, amount = 1) {
+      ensureAudio();
+      const ft = FISH_TYPES.find((f) => f.tier === tier);
+      if (!ft) return;
+      const current = playerState.fishBag[tier] || 0;
+      if (current <= 0) return;
+
+      const toSell = Math.min(current, amount);
+      playerState.fishBag[tier] = current - toSell;
+      playerState.coins += toSell * ft.gold;
+
+      playTone(520, 0.12, "sine", 0.12);
+      saveState();
+      renderSummaryPanels();
+    }
+
+    function sellAllCaughtFish() {
+      ensureAudio();
+      const totalVal = getTotalFishBagGold();
+      if (totalVal <= 0) return;
+
+      FISH_TYPES.forEach((ft) => {
+        playerState.fishBag[ft.tier] = 0;
+      });
+      playerState.coins += totalVal;
+
+      playTone(780, 0.25, "triangle", 0.16);
+      saveState();
+      renderSummaryPanels();
+    }
+
+    function buyOrEquipRod(rodId) {
+      ensureAudio();
+      const rod = RODS.find((r) => r.id === rodId);
+      if (!rod) return;
+
+      if (playerState.ownedRods.includes(rodId)) {
+        playerState.equippedRodId = rodId;
+        playTone(480, 0.12, "sine", 0.12);
+      } else if (playerState.coins >= rod.price) {
+        playerState.coins -= rod.price;
+        playerState.ownedRods.push(rodId);
+        playerState.equippedRodId = rodId;
+        playTone(680, 0.22, "triangle", 0.16);
+      }
+      saveState();
+      renderSummaryPanels();
+    }
+
+    function buyShopItem(itemKey) {
+      ensureAudio();
+      const it = ITEMS.find((x) => x.key === itemKey);
+      if (!it) return;
+      if (playerState.coins < it.price) return;
+
+      playerState.coins -= it.price;
+      playerState.items[itemKey] = (playerState.items[itemKey] || 0) + 1;
+      playTone(620, 0.15, "sine", 0.14);
+      saveState();
+      renderSummaryPanels();
+    }
+
+    function playNextOrRetryStage() {
+      const currentStageObj = getStageConfig(playerState.selectedStage);
+      if (roundScore >= currentStageObj.targetScore && !lastRoundQuitEarly) {
+        playerState.selectedStage = Math.min(playerState.unlockedStage, playerState.selectedStage + 1);
+      }
+      saveState();
+      startGameRound();
+    }
+
+    function renderSummaryPanels() {
+      document.getElementById("summary-coins").textContent = playerState.coins.toLocaleString();
+      const totalVal = getTotalFishBagGold();
+      const totalFishCount = getTotalFishBagCount();
+      document.getElementById("fish-bag-total-value").textContent = `มูลค่ารวม: ${totalVal.toLocaleString()} G`;
+
+      const totalBadge = document.getElementById("total-fish-count-badge");
+      if (totalBadge) totalBadge.textContent = `${totalFishCount.toLocaleString()} ตัว`;
+
+      // 1. Render Caught Fish List (Individual Sell + Keep for Synthesis/Trade)
+      const fishListEl = document.getElementById("caught-fish-list");
+      const ownedFishTypes = FISH_TYPES.filter((ft) => (playerState.fishBag[ft.tier] || 0) > 0);
+      if (ownedFishTypes.length === 0) {
+        fishListEl.innerHTML = `<div class="p-6 text-center text-slate-400 text-lg">ไม่มีปลาในกระชัง (ออกไปตกปลาเพื่อนำมาขาย หลอมอัปเกรด หรือแลกเบ็ด/ไอเทมได้เลย!)</div>`;
+      } else {
+        fishListEl.innerHTML = ownedFishTypes
+          .map((ft) => {
+            const count = playerState.fishBag[ft.tier] || 0;
+            const sumGold = count * ft.gold;
+            return `
+              <div class="p-3 rounded-2xl bg-slate-900/95 border border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-4 h-4 rounded-full shrink-0" style="background:${ft.color}"></span>
+                  <div>
+                    <div class="font-bold text-base md:text-lg text-white">★${ft.tier} ${ft.name} <span class="text-cyan-300 font-cyber">x${count}</span></div>
+                    <div class="text-xs text-slate-400">ตัวละ ${ft.gold.toLocaleString()} G · รวม <span class="text-amber-300 font-bold">${sumGold.toLocaleString()} G</span></div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <button
+                    onclick="sellSingleFish(${ft.tier}, 1)"
+                    class="neon-btn px-2.5 py-1.5 rounded-xl bg-amber-400/20 border border-amber-400 text-amber-300 font-bold text-xs md:text-sm"
+                  >ขาย 1 ตัว (+${ft.gold.toLocaleString()})</button>
+                  <button
+                    onclick="sellSingleFish(${ft.tier}, 999999)"
+                    class="neon-btn px-2.5 py-1.5 rounded-xl bg-amber-400 text-slate-950 font-black text-xs md:text-sm"
+                  >ขายชนิดนี้ทั้งหมด</button>
+                </div>
+              </div>
+            `;
+          })
+          .join("");
+      }
+
+      // 2. Render 20 Rods Shop (Gold Purchase / Equip)
+      const rodsEl = document.getElementById("shop-rods-list");
+      rodsEl.innerHTML = RODS.map((r) => {
+        const owned = playerState.ownedRods.includes(r.id);
+        const equipped = playerState.equippedRodId === r.id;
+        const canBuy = playerState.coins >= r.price;
+
+        return `
+          <div class="p-3 rounded-2xl bg-slate-900/95 border ${
+            equipped ? "border-lime-400" : owned ? "border-cyan-500/50" : "border-slate-700"
+          } flex items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+              <div class="w-12 h-12 rounded-xl bg-slate-950 border border-slate-700 flex items-center justify-center shrink-0">
+                ${getRodSVG(r.id)}
+              </div>
+              <div>
+                <div class="font-bold text-base md:text-lg text-white">${r.name}</div>
+                <div class="text-xs md:text-sm text-cyan-300 font-bold">พลังดึง ${r.power.toFixed(1)}x · รัศมี ${r.radius}px</div>
+                <div class="text-xs text-slate-400">${r.desc}</div>
+              </div>
+            </div>
+            <button
+              onclick="buyOrEquipRod(${r.id})"
+              ${!owned && !canBuy ? "disabled" : ""}
+              class="neon-btn px-4 py-2 rounded-xl font-black text-xs md:text-sm shrink-0 ${
+                equipped
+                  ? "bg-lime-400 text-slate-950"
+                  : owned
+                  ? "bg-cyan-400/20 border border-cyan-400 text-cyan-200"
+                  : canBuy
+                  ? "bg-amber-400 text-slate-950"
+                  : "bg-slate-800 text-slate-500 cursor-not-allowed"
+              }"
+            >
+              ${equipped ? "✓ ใช้อยู่" : owned ? "เลือกใช้" : `💰 ${r.price.toLocaleString()} G`}
+            </button>
+          </div>
+        `;
+      }).join("");
+
+      // 3. Render 20 Items Shop (Gold Purchase)
+      const searchQ = (document.getElementById("shop-item-search")?.value || "").trim().toLowerCase();
+      const itemsEl = document.getElementById("shop-items-list");
+      const filteredShopItems = ITEMS.filter(
+        (it) =>
+          !searchQ ||
+          it.name.toLowerCase().includes(searchQ) ||
+          it.desc.toLowerCase().includes(searchQ)
+      );
+
+      itemsEl.innerHTML = filteredShopItems
+        .map((it) => {
+          const count = playerState.items[it.key] || 0;
+          const canBuy = playerState.coins >= it.price;
+          return `
+            <div class="p-3 rounded-2xl bg-slate-900/95 border border-slate-700 flex items-center justify-between gap-3">
+              <div>
+                <div class="font-bold text-base md:text-lg text-white">
+                  ${it.icon} ${it.name} <span class="text-xs text-cyan-300 font-cyber">[ปุ่ม ${it.num}] (มี: ${count})</span>
+                </div>
+                <div class="text-xs text-slate-400">${it.desc}</div>
+              </div>
+              <button
+                onclick="buyShopItem('${it.key}')"
+                ${!canBuy ? "disabled" : ""}
+                class="neon-btn px-3.5 py-2 rounded-xl font-black text-xs md:text-sm shrink-0 ${
+                  canBuy
+                    ? "bg-amber-400 text-slate-950"
+                    : "bg-slate-800 text-slate-500 cursor-not-allowed"
+                }"
+              >
+                💰 ${it.price.toLocaleString()} G
+              </button>
+            </div>
+          `;
+        })
+        .join("");
+
+      // 4. Render HARDCORE Fish Tier Synthesis (Low Tier -> High Tier with Gold Fee & % Chance)
+      const fusionEl = document.getElementById("fish-fusion-list");
+      if (fusionEl) {
+        let fusionHTML = "";
+        for (let t = 1; t <= 19; t++) {
+          const fromFish = FISH_TYPES[t - 1];
+          const toFish = FISH_TYPES[t];
+          const { reqCount, goldFee, pityBonus, finalChance } = getFishFusionRequirement(t);
+          const have = playerState.fishBag[t] || 0;
+          const enoughFish = have >= reqCount;
+          const enoughGold = playerState.coins >= goldFee;
+          const canFuse = enoughFish && enoughGold;
+
+          fusionHTML += `
+            <div class="p-3 rounded-xl bg-slate-900 border ${
+              canFuse ? "border-cyan-400 shadow-[0_0_12px_rgba(0,243,255,0.2)]" : "border-slate-800"
+            } flex items-center justify-between gap-2">
+              <div class="text-xs md:text-sm space-y-0.5">
+                <div class="font-bold text-white">
+                  ★${fromFish.tier} ${fromFish.name}
+                  <span class="${enoughFish ? "text-lime-400" : "text-amber-300"} font-cyber">(${have}/${reqCount} ตัว)</span>
+                </div>
+                <div class="text-cyan-300 font-bold">
+                  ➔ หลอมเป็น ★${toFish.tier} ${toFish.name} (x1)
+                </div>
+                <div class="flex flex-wrap items-center gap-2 text-[11px] md:text-xs">
+                  <span class="${enoughGold ? "text-amber-300" : "text-rose-400"} font-bold">💰 ค่าไฟ: ${goldFee.toLocaleString()} G</span>
+                  <span class="px-1.5 py-0.5 rounded bg-slate-800 text-lime-300 font-cyber">
+                    โอกาสติด: ${finalChance}% ${pityBonus > 0 ? `(การันตี +${pityBonus}%)` : ""}
+                  </span>
+                </div>
+              </div>
+              <button
+                onclick="fuseFishTier(${t})"
+                ${!canFuse ? "disabled" : ""}
+                class="neon-btn px-3 py-2 rounded-lg font-black text-xs shrink-0 ${
+                  canFuse
+                    ? "bg-gradient-to-r from-cyan-400 to-lime-400 text-slate-950"
+                    : "bg-slate-800 text-slate-500 cursor-not-allowed"
+                }"
+              >
+                🧬 หลอม (${finalChance}%)
+              </button>
+            </div>
+          `;
+        }
+        fusionEl.innerHTML = fusionHTML;
+      }
+
+      // 5. Render HARDCORE Fish Trade for Rods (Requires 2 Fish Tiers + % Success Chance)
+      const tradeRodsEl = document.getElementById("fish-trade-rods-list");
+      if (tradeRodsEl) {
+        tradeRodsEl.innerHTML = RODS.slice(1)
+          .map((r) => {
+            const owned = playerState.ownedRods.includes(r.id);
+            const { reqTier1, reqCount1, reqTier2, reqCount2, pityBonus, finalChance } = getRodFishTradeCost(r.id);
+            const reqFish1 = FISH_TYPES[reqTier1 - 1];
+            const reqFish2 = FISH_TYPES[reqTier2 - 1];
+            const have1 = playerState.fishBag[reqTier1] || 0;
+            const have2 = playerState.fishBag[reqTier2] || 0;
+
+            const canTrade =
+              !owned &&
+              (reqTier1 === reqTier2
+                ? have1 >= reqCount1 + reqCount2
+                : have1 >= reqCount1 && have2 >= reqCount2);
+
+            return `
+              <div class="p-3 rounded-xl bg-slate-900 border ${
+                owned ? "border-lime-500/40" : canTrade ? "border-lime-400 shadow-[0_0_12px_rgba(57,255,20,0.2)]" : "border-slate-800"
+              } flex items-center justify-between gap-2">
+                <div class="text-xs md:text-sm space-y-0.5">
+                  <div class="font-bold text-white">${r.name} <span class="text-cyan-300">(${r.power.toFixed(1)}x)</span></div>
+                  ${
+                    reqTier1 === reqTier2
+                      ? `<div class="text-amber-300">• ★${reqFish1.tier} ${reqFish1.name}: <b>${have1}/${reqCount1 + reqCount2} ตัว</b></div>`
+                      : `<div class="${have1 >= reqCount1 ? "text-lime-300" : "text-amber-300"}">• ★${reqFish1.tier} ${reqFish1.name}: <b>${have1}/${reqCount1} ตัว</b></div>
+                         <div class="${have2 >= reqCount2 ? "text-lime-300" : "text-slate-400"}">• ★${reqFish2.tier} ${reqFish2.name}: <b>${have2}/${reqCount2} ตัว</b></div>`
+                  }
+                  ${
+                    !owned
+                      ? `<div class="pt-0.5">
+                          <span class="px-1.5 py-0.5 rounded bg-slate-800 text-lime-300 font-cyber text-[11px]">
+                            🎲 โอกาสสร้างติด: ${finalChance}% ${pityBonus > 0 ? `(การันตี +${pityBonus}%)` : ""}
+                          </span>
+                         </div>`
+                      : ""
+                  }
+                </div>
+                <button
+                  onclick="tradeFishForRod(${r.id})"
+                  ${owned || !canTrade ? "disabled" : ""}
+                  class="neon-btn px-3 py-2 rounded-lg font-black text-xs shrink-0 ${
+                    owned
+                      ? "bg-lime-400/20 text-lime-300 border border-lime-400"
+                      : canTrade
+                      ? "bg-lime-400 text-slate-950"
+                      : "bg-slate-800 text-slate-500 cursor-not-allowed"
+                  }"
+                >
+                  ${owned ? "✓ มีแล้ว" : `🔨 สร้าง (${finalChance}%)`}
+                </button>
+              </div>
+            `;
+          })
+          .join("");
+      }
+
+      // 6. Render HARDCORE Fish Trade for Items (Scales Steeply with Item Power)
+      const tradeItemsEl = document.getElementById("fish-trade-items-list");
+      if (tradeItemsEl) {
+        tradeItemsEl.innerHTML = ITEMS.map((it, idx) => {
+          const { reqTier1, reqCount1, hasSecond, reqTier2, reqCount2 } = getItemFishTradeCost(idx);
+          const reqFish1 = FISH_TYPES[reqTier1 - 1];
+          const reqFish2 = hasSecond ? FISH_TYPES[reqTier2 - 1] : null;
+          const have1 = playerState.fishBag[reqTier1] || 0;
+          const have2 = hasSecond ? playerState.fishBag[reqTier2] || 0 : 0;
+
+          const canTrade = have1 >= reqCount1 && (!hasSecond || have2 >= reqCount2);
+          const ownedCount = playerState.items[it.key] || 0;
+
+          return `
+            <div class="p-3 rounded-xl bg-slate-900 border ${
+              canTrade ? "border-pink-400 shadow-[0_0_12px_rgba(255,0,234,0.2)]" : "border-slate-800"
+            } flex items-center justify-between gap-2">
+              <div class="text-xs md:text-sm space-y-0.5">
+                <div class="font-bold text-white">
+                  ${it.icon} ${it.name} <span class="text-cyan-300">(มี: ${ownedCount})</span>
+                </div>
+                <div class="${have1 >= reqCount1 ? "text-lime-300" : "text-pink-300"}">
+                  • ★${reqFish1.tier} ${reqFish1.name}: <b>${have1}/${reqCount1} ตัว</b>
+                </div>
+                ${
+                  hasSecond && reqFish2
+                    ? `<div class="${have2 >= reqCount2 ? "text-lime-300" : "text-slate-400"}">
+                        • ★${reqFish2.tier} ${reqFish2.name}: <b>${have2}/${reqCount2} ตัว</b>
+                       </div>`
+                    : ""
+                }
+              </div>
+              <button
+                onclick="tradeFishForItem(${idx})"
+                ${!canTrade ? "disabled" : ""}
+                class="neon-btn px-3 py-2 rounded-lg font-black text-xs shrink-0 ${
+                  canTrade
+                    ? "bg-gradient-to-r from-pink-500 to-amber-400 text-slate-950"
+                    : "bg-slate-800 text-slate-500 cursor-not-allowed"
+                }"
+              >
+                ⚡ สังเวยแลก
+              </button>
+            </div>
+          `;
+        }).join("");
+      }
+
+      // Update AI Pass Probability Meter
+      updateAIPassMeter();
+    }
+
+    /*************************************************************
+     * 10. GEMINI AI STRATEGY ADVISOR & FREE-FORM CHATBOT
+     *************************************************************/
+    function calculatePassProbability(stageNum) {
+      const st = getStageConfig(stageNum);
+      const eqRod = RODS.find((r) => r.id === playerState.equippedRodId) || RODS[0];
+      let ownedItemPower = 0;
+      ITEMS.forEach((it, idx) => {
+        const cnt = playerState.items[it.key] || 0;
+        if (cnt > 0) ownedItemPower += cnt * (0.18 + idx * 0.12);
+      });
+
+      const expectedPowerNeeded = st.diffMult * 1.15;
+      const ratio = (eqRod.power + ownedItemPower) / expectedPowerNeeded;
+      return Math.max(5, Math.min(99, Math.round(ratio * 68)));
+    }
+
+    function updateAIPassMeter() {
+      const pct = calculatePassProbability(playerState.selectedStage);
+      const pctEl = document.getElementById("ai-pass-percent");
+      const barEl = document.getElementById("ai-pass-bar");
+      if (pctEl) pctEl.textContent = `${pct}%`;
+      if (barEl) barEl.style.width = `${pct}%`;
+    }
+
+    function appendChatMessage(sender, htmlText) {
+      const box = document.getElementById("ai-chat-response");
+      if (!box) return;
+      const div = document.createElement("div");
+      div.className =
+        sender === "user"
+          ? "p-2.5 rounded-xl bg-cyan-500/20 border border-cyan-400/50 text-cyan-100 text-sm md:text-base text-right"
+          : "p-2.5 rounded-xl bg-pink-500/15 border border-pink-400/40 text-slate-100 text-sm md:text-base";
+      div.innerHTML = htmlText;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function askAI(topic) {
+      const st = getStageConfig(playerState.selectedStage);
+      const eqRod = RODS.find((r) => r.id === playerState.equippedRodId) || RODS[0];
+      const pct = calculatePassProbability(st.stage);
+      const bagGold = getTotalFishBagGold();
+      const totalPotentialGold = playerState.coins + bagGold;
+
+      if (topic === "analyze") {
+        appendChatMessage(
+          "ai",
+          `🤖 <b>วิเคราะห์ด่านที่ ${st.stage} (${st.name}):</b> เป้าหมายคือ <b>${st.targetScore.toLocaleString()} คะแนน</b> ตอนนี้คุณถือ <b>${eqRod.name}</b> มีโอกาสผ่านด่านอยู่ที่ <b>${pct}%</b> (คุณสามารถเก็บปลาไว้หลอมอัปเกรด Tier หรือแลกเบ็ด/ไอเทมด้านล่างได้ด้วยนะ!)`
+        );
+      } else if (topic === "best_buy") {
+        const nextRod = RODS.find((r) => !playerState.ownedRods.includes(r.id) && r.id > eqRod.id);
+        if (nextRod) {
+          const { reqTier1, reqCount1 } = getRodFishTradeCost(nextRod.id);
+          const reqFish = FISH_TYPES[reqTier1 - 1];
+          appendChatMessage(
+            "ai",
+            `🛒 <b>แผนอัปเกรดที่คุ้มที่สุด:</b> แนะนำให้เล็ง <b>${nextRod.name} (พลังดึง ${nextRod.power}x)</b> โดยเลือกได้ 2 ทาง: <br/>1) ขายปลารวมกับเงินสด (จะมี ${totalPotentialGold.toLocaleString()} G / ราคา ${nextRod.price.toLocaleString()} G) <br/>2) หรือสะสมปลา <b>★${reqFish.tier} ${reqFish.name} (${reqCount1} ตัว) + ปลารอง</b> เพื่อสร้างเบ็ดฟรีที่ศูนย์หลอมปลาด้านล่าง!`
+          );
+        } else {
+          appendChatMessage("ai", `👑 คุณปลดล็อกเบ็ดครบทุกคันแล้ว! แนะนำให้นำปลาไปหลอมเป็น ★20 หรือแลกไอเทมระดับเทพได้เลย!`);
+        }
+      } else if (topic === "rare_tips") {
+        appendChatMessage(
+          "ai",
+          `🐉 <b>เทคนิคคอมโบ & การหลอมปลา:</b> หากด่านยังต่ำและจับปลาบอสยาก ให้เก็บปลาเล็กไว้ในกระชังแล้วกด <b>"🧬 หลอมอัปเกรด Tier"</b> ไต่ระดับขึ้นไปเรื่อยๆ เพื่อนำไปแลกเบ็ดระดับสูงหรือไอเทมคูณคะแนนก้าวกระโดดได้ครับ!`
+        );
+      }
+    }
+
+    async function handleCustomAIChat(e) {
+      e.preventDefault();
+      const input = document.getElementById("ai-chat-input");
+      const q = (input?.value || "").trim();
+      if (!q) return;
+      input.value = "";
+
+      appendChatMessage("user", `🧑‍🚀 <b>คุณ:</b> ${q}`);
+
+      const eqRod = RODS.find((r) => r.id === playerState.equippedRodId) || RODS[0];
+      const st = getStageConfig(playerState.selectedStage);
+      const pct = calculatePassProbability(st.stage);
+      const bagGold = getTotalFishBagGold();
+      const totalFishCount = getTotalFishBagCount();
+
+      const systemPrompt = `คุณคือ AI ผู้ช่วยอัจฉริยะในเกมตกปลาไซเบอร์พังก์ "NEON ANGLER 2099" ตอบสั้นกระชับ เป็นกันเอง และตรงคำถามที่สุด (ไม่เกิน 3-4 ประโยค)
+ข้อมูลผู้เล่นปัจจุบัน:
+- ชื่อ: ${playerState.name}, ด่านปัจจุบัน: ด่าน ${st.stage} (${st.name}, เป้าหมาย ${st.targetScore} คะแนน, โอกาสผ่านด่าน ${pct}%)
+- เงินสด: ${playerState.coins} G, ปลาในกระชังรวม: ${totalFishCount} ตัว (คิดเป็นมูลค่า ${bagGold} G)
+- เบ็ดที่ใช้อยู่: ${eqRod.name} (พลังดึง ${eqRod.power}x)
+- ระบบพิเศษในเกม: มีไอเทมเพิ่มเวลาตกปลาครบ 6 ระดับ (+10วิ 1,500G, +20วิ 12,000G, +30วิ 85,000G, +40วิ 480,000G, +50วิ 2,400,000G และสูงสุด +60วิ 12,500,000G), ศูนย์หลอมปลาฮาร์ดคอร์, สะสมปลาแลกเบ็ด 20 ระดับ และแลกไอเทม 25 ชนิด`;
+
+      const apiKey = "";
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+      try {
+        const response = await fetch(apiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: q }] }],
+            systemInstruction: { parts: [{ text: systemPrompt }] }
+          })
+        });
+        const result = await response.json();
+        const reply = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (reply) {
+          appendChatMessage("ai", `🤖 <b>AI:</b> ${reply.replace(/\n/g, "<br/>")}`);
+          return;
+        }
+      } catch (err) {}
+
+      // Local Smart Fallback if offline
+      appendChatMessage(
+        "ai",
+        `🤖 <b>AI:</b> สำหรับคำถาม <i>"${q}"</i> ตอนนี้คุณอยู่ด่าน ${st.stage} (โอกาสผ่าน ${pct}%) มีเงิน ${playerState.coins.toLocaleString()} G และปลาในกระชัง ${totalFishCount} ตัว แนะนำให้สะสมปลาเพื่อหลอมอัปเกรด Tier หรือนำไปแลกเบ็ดและไอเทมที่ศูนย์หลอมปลาด้านล่างได้เลยครับ!`
+      );
+    }
+  </script>
+</body>
+</html>
